@@ -115,6 +115,42 @@ KEYWORD_PRESETS = {
     ],
 }
 
+PAIN_SIGNAL_MAPPING = {
+    "sleep_problem": [
+        "sleep", "insomnia", "tired", "fatigue", "can't sleep", "wake up",
+        "sleepless", "restless", "oversleeping", "nap", "melatonin",
+    ],
+    "anxiety_stress": [
+        "anxiety", "stress", "anxious", "panic", "nervous", "overwhelmed",
+        "cortisol", "burnout", "worry", "depression", "mood",
+    ],
+    "gut_problem": [
+        "gut", "bloating", "ibs", "sibo", "constipation", "diarrhea",
+        "digestion", "microbiome", "probiotic", "stomach", "bowel",
+        "leaky gut", "crohn", "colitis",
+    ],
+    "low_energy": [
+        "energy", "fatigue", "exhausted", "brain fog", "no energy",
+        "tired", "lethargy", "adrenal", "crash", "sluggish",
+    ],
+    "supplement_question": [
+        "supplement", "vitamin", "magnesium", "zinc", "iron", "omega",
+        "fish oil", "b12", "d3", "dosage", "dose", "brand", "which supplement",
+    ],
+    "hormone_women": [
+        "menopause", "pcos", "estrogen", "progesterone", "perimenopause",
+        "period", "hormones", "thyroid", "pms", "fertility",
+    ],
+    "brain_cognition": [
+        "brain fog", "focus", "memory", "concentration", "nootropic",
+        "cognitive", "adhd", "mental clarity", "smart drug", "lion's mane",
+    ],
+    "weight_metabolism": [
+        "weight", "metabolism", "fat", "calorie", "lose weight", "obesity",
+        "bmi", "insulin", "blood sugar", "glucose", "keto", "diet",
+    ],
+}
+
 BOT_AUTHORS = {"automoderator", "bot", "reddit"}
 BOT_PHRASES = [
     "i am a bot",

@@ -7,6 +7,7 @@ from playwright.sync_api import BrowserContext, Page
 from reddit_models import (
     RedditPost, RedditComment,
     COMMENT_MATCH_DIRECT, COMMENT_MATCH_CONTEXT, COMMENT_MATCH_NONE,
+    detect_content_type, compute_analysis_priority, detect_pain_signal,
 )
 from reddit_filters import post_matches_data, comment_matches, is_bot_comment
 from utils.date_utils import utc_timestamp_to_date, now_utc_str, get_cutoff_timestamp
@@ -258,11 +259,14 @@ def _extract_comment(thing, post_id: str, subreddit: str) -> Optional[dict]:
 
 def _build_post(raw: dict, matched_keywords: List[str], sort_mode: str) -> RedditPost:
     selftext = raw.get("selftext", "")
-    lang = detect_language(f"{raw.get('title', '')} {selftext}")
+    title = raw.get("title", "")
+    lang = detect_language(f"{title} {selftext}")
+    trend = _compute_trend_score(raw.get("score", 0), raw.get("num_comments", 0))
+    num_comments = raw.get("num_comments", 0)
     return RedditPost(
         post_id=raw.get("id", ""),
         subreddit=raw.get("subreddit", ""),
-        title=raw.get("title", ""),
+        title=title,
         selftext=selftext,
         url=raw.get("url", ""),
         permalink=raw.get("permalink", ""),
@@ -270,7 +274,7 @@ def _build_post(raw: dict, matched_keywords: List[str], sort_mode: str) -> Reddi
         created_date=utc_timestamp_to_date(raw.get("created_utc", 0)),
         score=raw.get("score", 0),
         upvote_ratio=raw.get("upvote_ratio", 1.0),
-        num_comments=raw.get("num_comments", 0),
+        num_comments=num_comments,
         flair=raw.get("link_flair_text"),
         is_self=raw.get("is_self", False),
         is_video=raw.get("is_video", False),
@@ -280,7 +284,10 @@ def _build_post(raw: dict, matched_keywords: List[str], sort_mode: str) -> Reddi
         collected_at=now_utc_str(),
         post_text_length=len(selftext),
         language_detected=lang,
-        trend_score=_compute_trend_score(raw.get("score", 0), raw.get("num_comments", 0)),
+        trend_score=trend,
+        content_type=detect_content_type(raw),
+        analysis_priority=compute_analysis_priority(trend, num_comments),
+        pain_signal=detect_pain_signal(title, selftext),
     )
 
 
