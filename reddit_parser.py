@@ -4,11 +4,14 @@ from typing import List, Optional
 from loguru import logger
 from playwright.sync_api import BrowserContext, Page
 
-from reddit_models import RedditPost, RedditComment
+from reddit_models import (
+    RedditPost, RedditComment,
+    COMMENT_MATCH_DIRECT, COMMENT_MATCH_CONTEXT, COMMENT_MATCH_NONE,
+)
 from reddit_filters import post_matches_data, comment_matches, is_bot_comment
 from utils.date_utils import utc_timestamp_to_date, now_utc_str, get_cutoff_timestamp
 from utils.text_cleaner import clean_body
-from utils.language_utils import detect_language
+from utils.language_utils import detect_language, passes_language_filter
 
 BASE_URL = "https://www.reddit.com"
 OLD_BASE_URL = "https://old.reddit.com"
@@ -95,7 +98,6 @@ def _extract_post_from_thing(thing, subreddit: str) -> Optional[dict]:
 
     title_el = thing.query_selector("a.title")
     title = title_el.inner_text().strip() if title_el else ""
-
     url = title_el.get_attribute("href") if title_el else ""
     if url and url.startswith("/"):
         url = f"{OLD_BASE_URL}{url}"
@@ -135,7 +137,7 @@ def _extract_post_from_thing(thing, subreddit: str) -> Optional[dict]:
         "id": post_id,
         "subreddit": subreddit,
         "title": title,
-        "selftext": "",  # fetched separately
+        "selftext": "",
         "url": url,
         "permalink": permalink,
         "created_utc": created_utc,
@@ -150,13 +152,11 @@ def _extract_post_from_thing(thing, subreddit: str) -> Optional[dict]:
 
 
 def _fetch_selftext(context: BrowserContext, permalink: str) -> str:
-    """Visit post page on old.reddit.com and extract selftext."""
     old_url = permalink.replace("www.reddit.com", "old.reddit.com")
     page = _load_page(context, old_url)
     if not page:
         return ""
     try:
-        # selftext lives in div.usertext-body > div.md of the first .thing
         el = page.query_selector("div.thing div.usertext-body div.md")
         if el:
             return clean_body(el.inner_text().strip())
@@ -284,12 +284,32 @@ def _build_post(raw: dict, matched_keywords: List[str], sort_mode: str) -> Reddi
     )
 
 
-def _build_comment(raw: dict, post_title: str, keywords: List[str]) -> RedditComment:
+def _build_comment(
+    raw: dict,
+    post_title: str,
+    keywords: List[str],
+    post_has_keywords: bool,
+    min_comment_length: int,
+) -> Optional[RedditComment]:
     body = clean_body(raw.get("body", ""))
+    score = raw.get("score", 0)
+
+    # Filter short low-value comments (unless high score)
+    if len(body) < min_comment_length and score <= 10:
+        return None
+
     author = raw.get("author", "")
     matched = comment_matches(body, keywords)
     lang = detect_language(body)
     bot = is_bot_comment(author, body)
+
+    if matched:
+        match_type = COMMENT_MATCH_DIRECT
+    elif post_has_keywords:
+        match_type = COMMENT_MATCH_CONTEXT
+    else:
+        match_type = COMMENT_MATCH_NONE
+
     return RedditComment(
         comment_id=raw.get("id", ""),
         post_id=raw.get("post_id", ""),
@@ -297,7 +317,7 @@ def _build_comment(raw: dict, post_title: str, keywords: List[str]) -> RedditCom
         post_title=post_title,
         author=author,
         body=body,
-        score=raw.get("score", 0),
+        score=score,
         created_utc=raw.get("created_utc", 0),
         created_date=utc_timestamp_to_date(raw.get("created_utc", 0)),
         depth=raw.get("depth", 0),
@@ -307,6 +327,7 @@ def _build_comment(raw: dict, post_title: str, keywords: List[str]) -> RedditCom
         comment_text_length=len(body),
         language_detected=lang,
         is_bot_comment=bot,
+        comment_match_type=match_type,
     )
 
 
@@ -323,9 +344,8 @@ def parse_subreddits(
     fetch_selftext: bool = True,
     filter_bots: bool = True,
     language_mode: str = "mixed",
+    min_comment_length: int = 40,
 ) -> tuple[List[RedditPost], List[RedditComment]]:
-    from utils.language_utils import passes_language_filter
-
     context = reddit["context"]
     all_posts: List[RedditPost] = []
     all_comments: List[RedditComment] = []
@@ -336,43 +356,50 @@ def parse_subreddits(
         raw_posts = _get_posts_raw(context, subreddit_name, sort, limit)
         logger.info(f"r/{subreddit_name}: got {len(raw_posts)} raw posts")
 
-        matched_count = 0
+        sub_matched = 0
         for raw in raw_posts:
             ok, matched_kws = post_matches_data(raw, keywords, cutoff, min_score, min_comments)
             if not ok:
                 continue
 
-            # Fetch selftext for self-posts
             if fetch_selftext and raw.get("is_self") and raw.get("permalink"):
-                logger.debug(f"Fetching selftext for '{raw.get('title', '')[:60]}'")
+                logger.debug(f"Fetching selftext: '{raw.get('title', '')[:60]}'")
                 raw["selftext"] = _fetch_selftext(context, raw["permalink"])
                 time.sleep(0.8)
 
             post = _build_post(raw, matched_kws, sort)
 
             if not passes_language_filter(post.language_detected, language_mode):
-                logger.debug(f"Skipping post (language={post.language_detected}): {post.title[:60]}")
+                logger.debug(f"Skip post (lang={post.language_detected}): {post.title[:50]}")
                 continue
 
             all_posts.append(post)
-            matched_count += 1
+            sub_matched += 1
+            post_has_keywords = bool(matched_kws)
 
             if max_comments > 0:
                 raw_comments = _get_comments_raw(
                     context, subreddit_name, raw["id"], raw.get("permalink", ""), max_comments
                 )
+                added = 0
                 for rc in raw_comments:
-                    comment = _build_comment(rc, raw.get("title", ""), keywords)
-                    if filter_bots and comment.is_bot_comment:
-                        logger.debug(f"Filtered bot comment from '{comment.author}'")
+                    if filter_bots and is_bot_comment(rc.get("author", ""), rc.get("body", "")):
+                        logger.debug(f"Bot comment filtered: {rc.get('author')}")
+                        continue
+                    comment = _build_comment(
+                        rc, raw.get("title", ""), keywords, post_has_keywords, min_comment_length
+                    )
+                    if comment is None:
                         continue
                     if not passes_language_filter(comment.language_detected, language_mode):
                         continue
                     all_comments.append(comment)
+                    added += 1
 
-                logger.debug(f"  └─ {len(raw_comments)} comments for '{raw.get('title','')[:60]}'")
+                if added:
+                    logger.debug(f"  └─ {added} comments for '{raw.get('title','')[:55]}'")
                 time.sleep(1)
 
-        logger.info(f"r/{subreddit_name}: {matched_count} posts matched filters")
+        logger.info(f"r/{subreddit_name}: {sub_matched} posts matched")
 
     return all_posts, all_comments

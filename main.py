@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-Reddit Parser MVP
-CLI tool to collect posts and comments from Reddit subreddits.
-"""
+"""Reddit Parser MVP — collect posts and comments from Reddit."""
 
 import argparse
 import sys
@@ -13,7 +10,8 @@ from loguru import logger
 from utils.logger import setup_logger
 from config import (
     SUPPORTED_PERIODS, SUPPORTED_SORTS, SUPPORTED_EXPORTS,
-    SUPPORTED_LANGUAGE_MODES, RUN_MODES, KEYWORD_PRESETS,
+    SUPPORTED_LANGUAGE_MODES, RUN_MODES, KEYWORD_PRESETS, SUBREDDIT_PRESETS,
+    SMALL_DATASET_WARNING,
 )
 from reddit_client import create_reddit_client, close_reddit_client
 from reddit_parser import parse_subreddits
@@ -23,54 +21,66 @@ from utils.date_utils import now_utc_str, now_file_str
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Reddit Parser MVP — collect posts and comments from Reddit",
+        description="Reddit Parser MVP",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Run mode shortcuts (override --sort and --period):
-  --run-mode hot_last_7d    hot + last_7d
-  --run-mode top_week       top + last_7d
-  --run-mode rising_24h     rising + last_24h
-
-Keyword presets (use instead of --keywords):
-  wellness_en, wellness_ru, wellness_uk, crm_en, ai_en
+Subreddit presets:   wellness_en, wellness_gut, wellness_women, wellness_energy, crm_en, ai_en, ru_uk_mixed
+Keyword presets:     wellness_en, wellness_ru, wellness_uk, crm_en, ai_en
+Run modes:           hot_last_7d, top_week, top_month, rising_24h
 
 Examples:
-  python main.py --subreddits nutrition,Supplements --keywords magnesium,vitamin --export xlsx
-  python main.py --subreddits Biohackers --run-mode top_week --limit 100 --export csv
-  python main.py --subreddits nutrition --keyword-preset wellness_en --export xlsx
-  python main.py --subreddits keto --export json --language-mode en --no-bots
+  python main.py --subreddit-preset wellness_en --keyword-preset wellness_en --run-mode hot_last_7d --export xlsx
+  python main.py --subreddit-preset wellness_en --run-mode top_week --export xlsx
+  python main.py --subreddits nutrition,Supplements --keywords magnesium,gut --export xlsx
+  python main.py --subreddit-preset wellness_gut --run-mode rising_24h --language-mode en --export csv
         """,
     )
 
-    parser.add_argument("--subreddits", required=True,
-                        help="Comma-separated subreddits")
-    parser.add_argument("--keywords", default="",
-                        help="Comma-separated keywords (if omitted, all posts collected)")
-    parser.add_argument("--keyword-preset", default=None,
-                        choices=list(KEYWORD_PRESETS.keys()),
-                        help="Use a built-in keyword preset instead of --keywords")
+    # Source
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--subreddits", help="Comma-separated subreddits")
+    src.add_argument("--subreddit-preset", dest="subreddit_preset",
+                     choices=list(SUBREDDIT_PRESETS.keys()),
+                     help="Use a built-in subreddit list")
+
+    # Keywords
+    kw = parser.add_mutually_exclusive_group()
+    kw.add_argument("--keywords", default="", help="Comma-separated keywords")
+    kw.add_argument("--keyword-preset", dest="keyword_preset",
+                    choices=list(KEYWORD_PRESETS.keys()),
+                    help="Use a built-in keyword set")
+
+    # Sort / period / run mode
     parser.add_argument("--period", default="last_7d", choices=SUPPORTED_PERIODS)
     parser.add_argument("--sort", default="hot", choices=SUPPORTED_SORTS)
-    parser.add_argument("--run-mode", default=None, choices=list(RUN_MODES.keys()),
-                        help="Preset combination of --sort and --period")
-    parser.add_argument("--limit", type=int, default=50,
-                        help="Max posts per subreddit (default: 50)")
-    parser.add_argument("--comments", type=int, default=20,
-                        help="Max comments per post (default: 20, 0=skip)")
-    parser.add_argument("--min-score", type=int, default=5, dest="min_score",
-                        help="Minimum post score (default: 5)")
-    parser.add_argument("--min-comments", type=int, default=10, dest="min_comments",
-                        help="Minimum post comment count (default: 10)")
+    parser.add_argument("--run-mode", dest="run_mode", default=None,
+                        choices=list(RUN_MODES.keys()),
+                        help="Preset that sets sort, period, limits, thresholds")
+
+    # Limits (can be overridden even when run-mode is set)
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Max posts per subreddit (run-mode default if omitted)")
+    parser.add_argument("--comments", type=int, default=None,
+                        help="Max comments per post (run-mode default if omitted)")
+    parser.add_argument("--min-score", type=int, default=None, dest="min_score",
+                        help="Minimum post score (run-mode default if omitted)")
+    parser.add_argument("--min-comments", type=int, default=None, dest="min_comments",
+                        help="Minimum post comment count (run-mode default if omitted)")
+    parser.add_argument("--min-comment-length", type=int, default=40, dest="min_comment_length",
+                        help="Min comment body length in chars (default: 40; bypassed if score > 10)")
+
+    # Filters
+    parser.add_argument("--language-mode", default="mixed",
+                        choices=SUPPORTED_LANGUAGE_MODES, dest="language_mode")
+    parser.add_argument("--no-bots", action="store_true", dest="no_bots",
+                        help="Keep bot comments (they are filtered by default)")
+    parser.add_argument("--no-selftext", action="store_true", dest="no_selftext",
+                        help="Skip fetching post body (faster)")
+
+    # Export
     parser.add_argument("--export", default="xlsx", choices=SUPPORTED_EXPORTS)
     parser.add_argument("--output", default=None,
-                        help="Output filename without extension (auto-generated if omitted)")
-    parser.add_argument("--language-mode", default="mixed",
-                        choices=SUPPORTED_LANGUAGE_MODES, dest="language_mode",
-                        help="Filter by language: en/ru/uk/mixed (default: mixed)")
-    parser.add_argument("--no-bots", action="store_true", dest="no_bots",
-                        help="Filter out bot comments (AutoModerator etc.) — enabled by default")
-    parser.add_argument("--no-selftext", action="store_true", dest="no_selftext",
-                        help="Skip fetching selftext (faster but loses post body)")
+                        help="Output filename without extension")
     parser.add_argument("--verbose", action="store_true")
 
     return parser.parse_args()
@@ -80,14 +90,12 @@ def main() -> None:
     args = parse_args()
     setup_logger("DEBUG" if args.verbose else "INFO")
 
-    subreddits = [s.strip() for s in args.subreddits.split(",") if s.strip()]
-
-    # Resolve run mode
-    sort = args.sort
-    period = args.period
-    if args.run_mode:
-        sort, period = RUN_MODES[args.run_mode]
-        logger.info(f"Run mode '{args.run_mode}': sort={sort}, period={period}")
+    # Resolve subreddits
+    if args.subreddit_preset:
+        subreddits = SUBREDDIT_PRESETS[args.subreddit_preset]
+        logger.info(f"Subreddit preset '{args.subreddit_preset}': {len(subreddits)} subreddits")
+    else:
+        subreddits = [s.strip() for s in args.subreddits.split(",") if s.strip()]
 
     # Resolve keywords
     if args.keyword_preset:
@@ -98,37 +106,52 @@ def main() -> None:
     else:
         keywords = []
 
+    # Resolve run mode defaults, then apply CLI overrides
+    if args.run_mode:
+        mode = RUN_MODES[args.run_mode]
+        sort = mode["sort"]
+        period = mode["period"]
+        limit = args.limit if args.limit is not None else mode["limit"]
+        max_comments = args.comments if args.comments is not None else mode["comments"]
+        min_score = args.min_score if args.min_score is not None else mode["min_score"]
+        min_comments_count = args.min_comments if args.min_comments is not None else mode["min_comments"]
+    else:
+        sort = args.sort
+        period = args.period
+        limit = args.limit if args.limit is not None else 50
+        max_comments = args.comments if args.comments is not None else 20
+        min_score = args.min_score if args.min_score is not None else 5
+        min_comments_count = args.min_comments if args.min_comments is not None else 10
+
     filter_bots = not args.no_bots
     fetch_selftext = not args.no_selftext
 
-    logger.info("=" * 60)
+    logger.info("=" * 64)
     logger.info("Reddit Parser MVP")
-    logger.info(f"Subreddits   : {subreddits}")
-    logger.info(f"Keywords     : {keywords if keywords else '(all posts)'}")
-    logger.info(f"Period       : {period}")
-    logger.info(f"Sort         : {sort}")
-    logger.info(f"Limit        : {args.limit} posts/subreddit")
-    logger.info(f"Comments     : {args.comments} per post")
-    logger.info(f"Min score    : {args.min_score}")
-    logger.info(f"Min comments : {args.min_comments}")
-    logger.info(f"Language     : {args.language_mode}")
-    logger.info(f"Filter bots  : {filter_bots}")
-    logger.info(f"Fetch body   : {fetch_selftext}")
-    logger.info(f"Export       : {args.export}")
-    logger.info("=" * 60)
+    logger.info(f"Subreddits     : {subreddits}")
+    logger.info(f"Keywords       : {keywords[:5]}{'...' if len(keywords) > 5 else ''}" if keywords else "Keywords       : (all posts)")
+    logger.info(f"Period         : {period}   Sort: {sort}   Mode: {args.run_mode or '—'}")
+    logger.info(f"Limit          : {limit}/sub   Comments: {max_comments}/post")
+    logger.info(f"Min score      : {min_score}   Min comments: {min_comments_count}")
+    logger.info(f"Min cmnt len   : {args.min_comment_length} chars")
+    logger.info(f"Language       : {args.language_mode}   Bots: {'filtered' if filter_bots else 'kept'}")
+    logger.info(f"Fetch body     : {fetch_selftext}   Export: {args.export}")
+    logger.info("=" * 64)
 
     run_settings = {
         "run_date": now_utc_str(),
         "subreddits": ", ".join(subreddits),
+        "subreddit_preset": args.subreddit_preset or "—",
         "keywords": ", ".join(keywords) if keywords else "all",
         "keyword_preset": args.keyword_preset or "—",
         "period": period,
         "sort": sort,
         "run_mode": args.run_mode or "—",
-        "limit_per_subreddit": args.limit,
-        "max_comments_per_post": args.comments,
-        "min_score": args.min_score,
-        "min_comments": args.min_comments,
+        "limit_per_subreddit": limit,
+        "max_comments_per_post": max_comments,
+        "min_score": min_score,
+        "min_comments": min_comments_count,
+        "min_comment_length": args.min_comment_length,
         "language_mode": args.language_mode,
         "filter_bots": filter_bots,
         "fetch_selftext": fetch_selftext,
@@ -148,24 +171,27 @@ def main() -> None:
             keywords=keywords,
             period=period,
             sort=sort,
-            limit=args.limit,
-            max_comments=args.comments,
-            min_score=args.min_score,
-            min_comments=args.min_comments,
+            limit=limit,
+            max_comments=max_comments,
+            min_score=min_score,
+            min_comments=min_comments_count,
             fetch_selftext=fetch_selftext,
             filter_bots=filter_bots,
             language_mode=args.language_mode,
+            min_comment_length=args.min_comment_length,
         )
 
         posts_before = len(posts)
         posts = deduplicate_posts(posts)
         comments = deduplicate_comments(comments)
-        duplicate_posts_removed = posts_before - len(posts)
+        dupes_removed = posts_before - len(posts)
 
-        logger.info(f"Posts: {len(posts)} | Comments: {len(comments)} | Duplicates removed: {duplicate_posts_removed}")
+        logger.info(f"Posts: {len(posts)} | Comments: {len(comments)} | Dupes removed: {dupes_removed}")
 
-        if not posts:
-            logger.warning("No posts collected. Try wider keywords, lower --min-score, or different subreddits.")
+        if len(posts) < 20:
+            logger.warning(f"Only {len(posts)} posts collected. " + SMALL_DATASET_WARNING)
+        if len(comments) < 100:
+            logger.warning(f"Only {len(comments)} comments collected. " + SMALL_DATASET_WARNING)
 
         ts = now_file_str()
         output_name = args.output or f"reddit_{ts}"
@@ -175,26 +201,26 @@ def main() -> None:
 
         if args.export == "xlsx":
             from exporters.excel_exporter import export_excel
-            output_path = os.path.join(EXPORTS_DIR, f"{output_name}.xlsx") if args.output else None
-            result = export_excel(posts, comments, run_settings, output_path, duplicate_posts_removed)
-            logger.info(f"Output file: {result}")
+            out = os.path.join(EXPORTS_DIR, f"{output_name}.xlsx") if args.output else None
+            result = export_excel(posts, comments, run_settings, out, dupes_removed)
+            logger.info(f"Output: {result}")
 
         elif args.export == "csv":
             from exporters.csv_exporter import export_csv
             prefix = output_name if args.output else f"reddit_{ts}"
-            posts_path, comments_path = export_csv(posts, comments, prefix)
-            logger.info(f"Posts   : {posts_path}")
-            logger.info(f"Comments: {comments_path}")
+            p, c = export_csv(posts, comments, prefix)
+            logger.info(f"Posts   : {p}")
+            logger.info(f"Comments: {c}")
 
         elif args.export == "json":
             from exporters.json_exporter import export_json
-            output_path = os.path.join(EXPORTS_DIR, f"{output_name}.json") if args.output else None
-            result = export_json(posts, comments, run_settings, output_path)
-            logger.info(f"Output file: {result}")
+            out = os.path.join(EXPORTS_DIR, f"{output_name}.json") if args.output else None
+            result = export_json(posts, comments, run_settings, out)
+            logger.info(f"Output: {result}")
 
-        logger.info("=" * 60)
+        logger.info("=" * 64)
         logger.info(f"Done! {len(posts)} posts, {len(comments)} comments.")
-        logger.info("=" * 60)
+        logger.info("=" * 64)
 
     finally:
         close_reddit_client(reddit)

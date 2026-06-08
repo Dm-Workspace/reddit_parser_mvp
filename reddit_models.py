@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 from typing import Optional
 
+COMMENT_MATCH_DIRECT = "direct_keyword_match"
+COMMENT_MATCH_CONTEXT = "context_comment"
+COMMENT_MATCH_NONE = "no_match"
+
 
 @dataclass
 class RedditPost:
@@ -70,6 +74,7 @@ class RedditComment:
     comment_text_length: int
     language_detected: str
     is_bot_comment: bool
+    comment_match_type: str  # direct_keyword_match | context_comment | no_match
 
     def to_dict(self) -> dict:
         return {
@@ -89,4 +94,5 @@ class RedditComment:
             "comment_text_length": self.comment_text_length,
             "language_detected": self.language_detected,
             "is_bot_comment": self.is_bot_comment,
+            "comment_match_type": self.comment_match_type,
         }
