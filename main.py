@@ -140,49 +140,49 @@ def main() -> None:
 
     try:
         posts, comments = parse_subreddits(
-        reddit=reddit,
-        subreddits=subreddits,
-        keywords=keywords,
-        period=args.period,
-        sort=args.sort,
-        limit=args.limit,
-        max_comments=args.comments,
-        min_score=args.min_score,
-        min_comments=args.min_comments,
-    )
+            reddit=reddit,
+            subreddits=subreddits,
+            keywords=keywords,
+            period=args.period,
+            sort=args.sort,
+            limit=args.limit,
+            max_comments=args.comments,
+            min_score=args.min_score,
+            min_comments=args.min_comments,
+        )
 
-    logger.info(f"Before deduplication: {len(posts)} posts, {len(comments)} comments")
-    posts = deduplicate_posts(posts)
-    comments = deduplicate_comments(comments)
-    logger.info(f"After deduplication : {len(posts)} posts, {len(comments)} comments")
+        logger.info(f"Before deduplication: {len(posts)} posts, {len(comments)} comments")
+        posts = deduplicate_posts(posts)
+        comments = deduplicate_comments(comments)
+        logger.info(f"After deduplication : {len(posts)} posts, {len(comments)} comments")
 
-    if not posts:
-        logger.warning("No posts collected. Check your filters, keywords, or subreddit names.")
+        if not posts:
+            logger.warning("No posts collected. Check your filters, keywords, or subreddit names.")
 
-    ts = now_file_str()
-    output_name = args.output or f"reddit_{ts}"
+        ts = now_file_str()
+        output_name = args.output or f"reddit_{ts}"
 
-    from config import EXPORTS_DIR
-    os.makedirs(EXPORTS_DIR, exist_ok=True)
+        from config import EXPORTS_DIR
+        os.makedirs(EXPORTS_DIR, exist_ok=True)
 
-    if args.export == "xlsx":
-        from exporters.excel_exporter import export_excel
-        output_path = os.path.join(EXPORTS_DIR, f"{output_name}.xlsx") if args.output else None
-        result = export_excel(posts, comments, run_settings, output_path)
-        logger.info(f"Output file: {result}")
+        if args.export == "xlsx":
+            from exporters.excel_exporter import export_excel
+            output_path = os.path.join(EXPORTS_DIR, f"{output_name}.xlsx") if args.output else None
+            result = export_excel(posts, comments, run_settings, output_path)
+            logger.info(f"Output file: {result}")
 
-    elif args.export == "csv":
-        from exporters.csv_exporter import export_csv
-        prefix = output_name if args.output else f"reddit_{ts}"
-        posts_path, comments_path = export_csv(posts, comments, prefix)
-        logger.info(f"Posts file   : {posts_path}")
-        logger.info(f"Comments file: {comments_path}")
+        elif args.export == "csv":
+            from exporters.csv_exporter import export_csv
+            prefix = output_name if args.output else f"reddit_{ts}"
+            posts_path, comments_path = export_csv(posts, comments, prefix)
+            logger.info(f"Posts file   : {posts_path}")
+            logger.info(f"Comments file: {comments_path}")
 
-    elif args.export == "json":
-        from exporters.json_exporter import export_json
-        output_path = os.path.join(EXPORTS_DIR, f"{output_name}.json") if args.output else None
-        result = export_json(posts, comments, run_settings, output_path)
-        logger.info(f"Output file: {result}")
+        elif args.export == "json":
+            from exporters.json_exporter import export_json
+            output_path = os.path.join(EXPORTS_DIR, f"{output_name}.json") if args.output else None
+            result = export_json(posts, comments, run_settings, output_path)
+            logger.info(f"Output file: {result}")
 
         logger.info("=" * 60)
         logger.info(f"Done! {len(posts)} posts, {len(comments)} comments collected.")
