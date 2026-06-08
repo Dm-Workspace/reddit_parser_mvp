@@ -9,20 +9,29 @@ from utils.date_utils import utc_timestamp_to_date, now_utc_str, get_cutoff_time
 from utils.text_cleaner import clean_body
 
 BASE_URL = "https://www.reddit.com"
+OLD_BASE_URL = "https://old.reddit.com"
 
 
 def _fetch_json(session: requests.Session, url: str, params: dict = None) -> Optional[dict]:
-    try:
-        resp = session.get(url, params=params, timeout=15)
-        if resp.status_code == 429:
-            logger.warning("Rate limited by Reddit, waiting 10s...")
-            time.sleep(10)
-            resp = session.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        logger.error(f"Request failed: {url} — {e}")
-        return None
+    urls_to_try = [url, url.replace("www.reddit.com", "old.reddit.com")]
+    for attempt_url in urls_to_try:
+        try:
+            time.sleep(1.5)
+            resp = session.get(attempt_url, params=params, timeout=20)
+            if resp.status_code == 429:
+                logger.warning("Rate limited by Reddit, waiting 15s...")
+                time.sleep(15)
+                resp = session.get(attempt_url, params=params, timeout=20)
+            if resp.status_code == 403:
+                logger.debug(f"403 on {attempt_url}, trying fallback...")
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.debug(f"Attempt failed: {attempt_url} — {e}")
+            continue
+    logger.error(f"All attempts failed for: {url}")
+    return None
 
 
 def _get_posts_raw(
