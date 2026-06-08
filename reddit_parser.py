@@ -1,7 +1,8 @@
 import time
-import requests
+import json
 from typing import List, Optional
 from loguru import logger
+from playwright.sync_api import BrowserContext
 
 from reddit_models import RedditPost, RedditComment
 from reddit_filters import post_matches_data, comment_matches
@@ -9,48 +10,41 @@ from utils.date_utils import utc_timestamp_to_date, now_utc_str, get_cutoff_time
 from utils.text_cleaner import clean_body
 
 BASE_URL = "https://www.reddit.com"
-OLD_BASE_URL = "https://old.reddit.com"
 
 
-def _fetch_json(session: requests.Session, url: str, params: dict = None) -> Optional[dict]:
-    urls_to_try = [url, url.replace("www.reddit.com", "old.reddit.com")]
-    for attempt_url in urls_to_try:
-        try:
-            time.sleep(1.5)
-            resp = session.get(attempt_url, params=params, timeout=20)
-            if resp.status_code == 429:
-                logger.warning("Rate limited by Reddit, waiting 15s...")
-                time.sleep(15)
-                resp = session.get(attempt_url, params=params, timeout=20)
-            if resp.status_code == 403:
-                logger.debug(f"403 on {attempt_url}, trying fallback...")
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            logger.debug(f"Attempt failed: {attempt_url} — {e}")
-            continue
-    logger.error(f"All attempts failed for: {url}")
-    return None
+def _fetch_json(context: BrowserContext, url: str, params: str = "") -> Optional[dict]:
+    full_url = f"{url}?{params}" if params else url
+    page = context.new_page()
+    try:
+        page.goto(full_url, wait_until="domcontentloaded", timeout=30000)
+        time.sleep(1.5)
+        content = page.inner_text("pre") if page.query_selector("pre") else page.content()
+        data = json.loads(content)
+        return data
+    except Exception as e:
+        logger.debug(f"Fetch failed: {full_url} — {e}")
+        return None
+    finally:
+        page.close()
 
 
 def _get_posts_raw(
-    session: requests.Session,
+    context: BrowserContext,
     subreddit: str,
     sort: str,
     limit: int,
 ) -> List[dict]:
-    url = f"{BASE_URL}/r/{subreddit}/{sort}.json"
     collected = []
     after = None
 
     while len(collected) < limit:
         batch_size = min(100, limit - len(collected))
-        params = {"limit": batch_size, "raw_json": 1}
+        params = f"limit={batch_size}&raw_json=1"
         if after:
-            params["after"] = after
+            params += f"&after={after}"
 
-        data = _fetch_json(session, url, params)
+        url = f"{BASE_URL}/r/{subreddit}/{sort}.json"
+        data = _fetch_json(context, url, params)
         if not data:
             break
 
@@ -65,20 +59,20 @@ def _get_posts_raw(
         if not after:
             break
 
-        time.sleep(1)
+        time.sleep(2)
 
     return collected[:limit]
 
 
 def _get_comments_raw(
-    session: requests.Session,
+    context: BrowserContext,
     subreddit: str,
     post_id: str,
     max_comments: int,
 ) -> List[dict]:
     url = f"{BASE_URL}/r/{subreddit}/comments/{post_id}.json"
-    params = {"limit": max_comments, "depth": 3, "raw_json": 1}
-    data = _fetch_json(session, url, params)
+    params = f"limit={max_comments}&depth=3&raw_json=1"
+    data = _fetch_json(context, url, params)
     if not data or len(data) < 2:
         return []
 
@@ -92,8 +86,7 @@ def _flatten_comments(children: List[dict], result: List[dict], limit: int, dept
     for child in children:
         if len(result) >= limit:
             break
-        kind = child.get("kind")
-        if kind != "t1":
+        if child.get("kind") != "t1":
             continue
         data = child.get("data", {})
         data["_depth"] = depth
@@ -146,7 +139,7 @@ def _build_comment(raw: dict, post_id: str, subreddit: str, post_title: str, key
 
 
 def parse_subreddits(
-    reddit: requests.Session,
+    reddit: dict,
     subreddits: List[str],
     keywords: List[str],
     period: str,
@@ -156,13 +149,14 @@ def parse_subreddits(
     min_score: int,
     min_comments: int,
 ) -> tuple[List[RedditPost], List[RedditComment]]:
+    context = reddit["context"]
     all_posts: List[RedditPost] = []
     all_comments: List[RedditComment] = []
     cutoff = get_cutoff_timestamp(period)
 
     for subreddit_name in subreddits:
         logger.info(f"Fetching r/{subreddit_name} [{sort}, limit={limit}]")
-        raw_posts = _get_posts_raw(reddit, subreddit_name, sort, limit)
+        raw_posts = _get_posts_raw(context, subreddit_name, sort, limit)
         logger.info(f"r/{subreddit_name}: got {len(raw_posts)} raw posts")
 
         matched_count = 0
@@ -176,15 +170,13 @@ def parse_subreddits(
             matched_count += 1
 
             if max_comments > 0:
-                raw_comments = _get_comments_raw(
-                    reddit, subreddit_name, raw["id"], max_comments
-                )
+                raw_comments = _get_comments_raw(context, subreddit_name, raw["id"], max_comments)
                 for rc in raw_comments:
                     comment = _build_comment(rc, raw["id"], subreddit_name, raw.get("title", ""), keywords)
                     all_comments.append(comment)
                 if raw_comments:
-                    logger.debug(f"  └─ {len(raw_comments)} comments for '{raw.get('title', '')[:60]}'")
-                time.sleep(0.5)
+                    logger.debug(f"  └─ {len(raw_comments)} comments for '{raw.get('title','')[:60]}'")
+                time.sleep(1)
 
         logger.info(f"r/{subreddit_name}: {matched_count} posts matched filters")
 

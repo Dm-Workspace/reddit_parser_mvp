@@ -13,7 +13,7 @@ from loguru import logger
 
 from utils.logger import setup_logger
 from config import SUPPORTED_PERIODS, SUPPORTED_SORTS, SUPPORTED_EXPORTS
-from reddit_client import create_reddit_client
+from reddit_client import create_reddit_client, close_reddit_client
 from reddit_parser import parse_subreddits
 from utils.deduplication import deduplicate_posts, deduplicate_comments
 from utils.date_utils import now_utc_str, now_file_str
@@ -134,11 +134,12 @@ def main() -> None:
 
     try:
         reddit = create_reddit_client()
-    except ValueError as e:
-        logger.error(str(e))
+    except Exception as e:
+        logger.error(f"Failed to start browser: {e}")
         sys.exit(1)
 
-    posts, comments = parse_subreddits(
+    try:
+        posts, comments = parse_subreddits(
         reddit=reddit,
         subreddits=subreddits,
         keywords=keywords,
@@ -183,9 +184,11 @@ def main() -> None:
         result = export_json(posts, comments, run_settings, output_path)
         logger.info(f"Output file: {result}")
 
-    logger.info("=" * 60)
-    logger.info(f"Done! {len(posts)} posts, {len(comments)} comments collected.")
-    logger.info("=" * 60)
+        logger.info("=" * 60)
+        logger.info(f"Done! {len(posts)} posts, {len(comments)} comments collected.")
+        logger.info("=" * 60)
+    finally:
+        close_reddit_client(reddit)
 
 
 if __name__ == "__main__":

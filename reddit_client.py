@@ -1,25 +1,28 @@
-import requests
+from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
 from loguru import logger
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Referer": "https://www.reddit.com/",
-    "Origin": "https://www.reddit.com",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Dest": "empty",
-}
 
-SESSION = None
+def create_reddit_client() -> dict:
+    """Returns a dict with playwright context. Caller must close it."""
+    playwright = sync_playwright().start()
+    browser = playwright.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+    )
+    context = browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        viewport={"width": 1280, "height": 800},
+        locale="en-US",
+    )
+    context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    logger.info("Browser client created (Playwright, no API keys required)")
+    return {"playwright": playwright, "browser": browser, "context": context}
 
 
-def create_reddit_client() -> requests.Session:
-    global SESSION
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    logger.info("Reddit HTTP client created (no API keys required)")
-    SESSION = session
-    return session
+def close_reddit_client(client: dict) -> None:
+    try:
+        client["context"].close()
+        client["browser"].close()
+        client["playwright"].stop()
+    except Exception:
+        pass
