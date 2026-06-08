@@ -1,112 +1,143 @@
-import praw
+import time
+import requests
 from typing import List, Optional
 from loguru import logger
 
 from reddit_models import RedditPost, RedditComment
-from reddit_filters import post_matches, comment_matches
-from utils.date_utils import utc_timestamp_to_date, now_utc_str
+from reddit_filters import post_matches_data, comment_matches
+from utils.date_utils import utc_timestamp_to_date, now_utc_str, get_cutoff_timestamp
 from utils.text_cleaner import clean_body
 
+BASE_URL = "https://www.reddit.com"
 
-def _get_subreddit_posts(
-    reddit: praw.Reddit,
-    subreddit_name: str,
+
+def _fetch_json(session: requests.Session, url: str, params: dict = None) -> Optional[dict]:
+    try:
+        resp = session.get(url, params=params, timeout=15)
+        if resp.status_code == 429:
+            logger.warning("Rate limited by Reddit, waiting 10s...")
+            time.sleep(10)
+            resp = session.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logger.error(f"Request failed: {url} — {e}")
+        return None
+
+
+def _get_posts_raw(
+    session: requests.Session,
+    subreddit: str,
     sort: str,
     limit: int,
-) -> List:
-    sub = reddit.subreddit(subreddit_name)
-    sort_map = {
-        "hot": sub.hot,
-        "new": sub.new,
-        "top": sub.top,
-        "rising": sub.rising,
-        "controversial": sub.controversial,
-    }
-    fetch_fn = sort_map.get(sort, sub.hot)
+) -> List[dict]:
+    url = f"{BASE_URL}/r/{subreddit}/{sort}.json"
+    collected = []
+    after = None
 
-    try:
-        if sort == "top":
-            return list(fetch_fn(limit=limit, time_filter="all"))
-        return list(fetch_fn(limit=limit))
-    except Exception as e:
-        logger.error(f"Failed to fetch posts from r/{subreddit_name}: {e}")
+    while len(collected) < limit:
+        batch_size = min(100, limit - len(collected))
+        params = {"limit": batch_size, "raw_json": 1}
+        if after:
+            params["after"] = after
+
+        data = _fetch_json(session, url, params)
+        if not data:
+            break
+
+        children = data.get("data", {}).get("children", [])
+        if not children:
+            break
+
+        for child in children:
+            collected.append(child.get("data", {}))
+
+        after = data.get("data", {}).get("after")
+        if not after:
+            break
+
+        time.sleep(1)
+
+    return collected[:limit]
+
+
+def _get_comments_raw(
+    session: requests.Session,
+    subreddit: str,
+    post_id: str,
+    max_comments: int,
+) -> List[dict]:
+    url = f"{BASE_URL}/r/{subreddit}/comments/{post_id}.json"
+    params = {"limit": max_comments, "depth": 3, "raw_json": 1}
+    data = _fetch_json(session, url, params)
+    if not data or len(data) < 2:
         return []
 
+    comments = []
+    comment_listing = data[1].get("data", {}).get("children", [])
+    _flatten_comments(comment_listing, comments, max_comments, depth=0)
+    return comments
 
-def _build_post(
-    submission: praw.models.Submission,
-    matched_keywords: List[str],
-    sort_mode: str,
-) -> RedditPost:
+
+def _flatten_comments(children: List[dict], result: List[dict], limit: int, depth: int) -> None:
+    for child in children:
+        if len(result) >= limit:
+            break
+        kind = child.get("kind")
+        if kind != "t1":
+            continue
+        data = child.get("data", {})
+        data["_depth"] = depth
+        result.append(data)
+        replies = data.get("replies")
+        if isinstance(replies, dict):
+            sub_children = replies.get("data", {}).get("children", [])
+            _flatten_comments(sub_children, result, limit, depth + 1)
+
+
+def _build_post(raw: dict, matched_keywords: List[str], sort_mode: str) -> RedditPost:
     return RedditPost(
-        post_id=submission.id,
-        subreddit=str(submission.subreddit),
-        title=submission.title,
-        selftext=clean_body(submission.selftext or ""),
-        url=submission.url,
-        permalink=f"https://www.reddit.com{submission.permalink}",
-        created_utc=submission.created_utc,
-        created_date=utc_timestamp_to_date(submission.created_utc),
-        score=submission.score,
-        upvote_ratio=submission.upvote_ratio,
-        num_comments=submission.num_comments,
-        flair=submission.link_flair_text,
-        is_self=submission.is_self,
-        is_video=submission.is_video,
-        domain=submission.domain,
+        post_id=raw.get("id", ""),
+        subreddit=raw.get("subreddit", ""),
+        title=raw.get("title", ""),
+        selftext=clean_body(raw.get("selftext", "")),
+        url=raw.get("url", ""),
+        permalink=f"{BASE_URL}{raw.get('permalink', '')}",
+        created_utc=raw.get("created_utc", 0),
+        created_date=utc_timestamp_to_date(raw.get("created_utc", 0)),
+        score=raw.get("score", 0),
+        upvote_ratio=raw.get("upvote_ratio", 0.0),
+        num_comments=raw.get("num_comments", 0),
+        flair=raw.get("link_flair_text"),
+        is_self=raw.get("is_self", False),
+        is_video=raw.get("is_video", False),
+        domain=raw.get("domain", ""),
         matched_keywords=", ".join(matched_keywords),
         sort_mode=sort_mode,
         collected_at=now_utc_str(),
     )
 
 
-def _fetch_comments(
-    submission: praw.models.Submission,
-    max_comments: int,
-    keywords: List[str],
-    post_id: str,
-    subreddit: str,
-    post_title: str,
-) -> List[RedditComment]:
-    try:
-        submission.comments.replace_more(limit=0)
-    except Exception as e:
-        logger.warning(f"Could not expand comments for {post_id}: {e}")
-        return []
-
-    collected = []
-    collected_at = now_utc_str()
-
-    for comment in submission.comments.list():
-        if len(collected) >= max_comments:
-            break
-        if not hasattr(comment, "body"):
-            continue
-        if comment.body in ("[deleted]", "[removed]", ""):
-            continue
-
-        matched = comment_matches(comment.body, keywords)
-
-        collected.append(RedditComment(
-            comment_id=comment.id,
-            post_id=post_id,
-            subreddit=subreddit,
-            post_title=post_title,
-            body=clean_body(comment.body),
-            score=comment.score,
-            created_utc=comment.created_utc,
-            created_date=utc_timestamp_to_date(comment.created_utc),
-            depth=comment.depth,
-            permalink=f"https://www.reddit.com{comment.permalink}",
-            matched_keywords=", ".join(matched),
-            collected_at=collected_at,
-        ))
-
-    return collected
+def _build_comment(raw: dict, post_id: str, subreddit: str, post_title: str, keywords: List[str]) -> RedditComment:
+    matched = comment_matches(raw.get("body", ""), keywords)
+    return RedditComment(
+        comment_id=raw.get("id", ""),
+        post_id=post_id,
+        subreddit=subreddit,
+        post_title=post_title,
+        body=clean_body(raw.get("body", "")),
+        score=raw.get("score", 0),
+        created_utc=raw.get("created_utc", 0),
+        created_date=utc_timestamp_to_date(raw.get("created_utc", 0)),
+        depth=raw.get("_depth", 0),
+        permalink=f"{BASE_URL}{raw.get('permalink', '')}",
+        matched_keywords=", ".join(matched),
+        collected_at=now_utc_str(),
+    )
 
 
 def parse_subreddits(
-    reddit: praw.Reddit,
+    reddit: requests.Session,
     subreddits: List[str],
     keywords: List[str],
     period: str,
@@ -118,36 +149,33 @@ def parse_subreddits(
 ) -> tuple[List[RedditPost], List[RedditComment]]:
     all_posts: List[RedditPost] = []
     all_comments: List[RedditComment] = []
+    cutoff = get_cutoff_timestamp(period)
 
     for subreddit_name in subreddits:
         logger.info(f"Fetching r/{subreddit_name} [{sort}, limit={limit}]")
-        submissions = _get_subreddit_posts(reddit, subreddit_name, sort, limit)
-        logger.info(f"r/{subreddit_name}: got {len(submissions)} raw posts")
+        raw_posts = _get_posts_raw(reddit, subreddit_name, sort, limit)
+        logger.info(f"r/{subreddit_name}: got {len(raw_posts)} raw posts")
 
         matched_count = 0
-        for submission in submissions:
-            ok, matched_kws = post_matches(
-                submission, keywords, period, min_score, min_comments
-            )
+        for raw in raw_posts:
+            ok, matched_kws = post_matches_data(raw, keywords, cutoff, min_score, min_comments)
             if not ok:
                 continue
 
-            post = _build_post(submission, matched_kws, sort)
+            post = _build_post(raw, matched_kws, sort)
             all_posts.append(post)
             matched_count += 1
 
             if max_comments > 0:
-                comments = _fetch_comments(
-                    submission,
-                    max_comments,
-                    keywords,
-                    submission.id,
-                    str(submission.subreddit),
-                    submission.title,
+                raw_comments = _get_comments_raw(
+                    reddit, subreddit_name, raw["id"], max_comments
                 )
-                all_comments.extend(comments)
-                if comments:
-                    logger.debug(f"  └─ {len(comments)} comments collected for '{submission.title[:60]}'")
+                for rc in raw_comments:
+                    comment = _build_comment(rc, raw["id"], subreddit_name, raw.get("title", ""), keywords)
+                    all_comments.append(comment)
+                if raw_comments:
+                    logger.debug(f"  └─ {len(raw_comments)} comments for '{raw.get('title', '')[:60]}'")
+                time.sleep(0.5)
 
         logger.info(f"r/{subreddit_name}: {matched_count} posts matched filters")
 

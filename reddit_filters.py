@@ -1,9 +1,4 @@
-from typing import List, Optional
-from loguru import logger
-
-import praw.models
-
-from utils.date_utils import get_cutoff_timestamp
+from typing import List, Optional, Tuple
 from utils.text_cleaner import normalize_text
 
 
@@ -14,27 +9,24 @@ def matches_keywords(text: str, keywords: List[str]) -> List[str]:
     return [kw for kw in keywords if normalize_text(kw) in norm]
 
 
-def post_matches(
-    submission: praw.models.Submission,
+def post_matches_data(
+    raw: dict,
     keywords: List[str],
-    period: str,
+    cutoff: Optional[float],
     min_score: int,
     min_comments: int,
-) -> tuple[bool, List[str]]:
-    cutoff = get_cutoff_timestamp(period)
-    if cutoff and submission.created_utc < cutoff:
+) -> Tuple[bool, List[str]]:
+    if cutoff and raw.get("created_utc", 0) < cutoff:
         return False, []
-
-    if submission.score < min_score:
+    if raw.get("score", 0) < min_score:
         return False, []
-
-    if submission.num_comments < min_comments:
+    if raw.get("num_comments", 0) < min_comments:
         return False, []
 
     if not keywords:
         return True, []
 
-    combined = f"{submission.title} {submission.selftext or ''}"
+    combined = f"{raw.get('title', '')} {raw.get('selftext', '')}"
     matched = matches_keywords(combined, keywords)
     return bool(matched), matched
 
