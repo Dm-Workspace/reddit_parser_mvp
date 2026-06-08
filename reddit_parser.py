@@ -5,9 +5,10 @@ from loguru import logger
 from playwright.sync_api import BrowserContext, Page
 
 from reddit_models import RedditPost, RedditComment
-from reddit_filters import post_matches_data, comment_matches
+from reddit_filters import post_matches_data, comment_matches, is_bot_comment
 from utils.date_utils import utc_timestamp_to_date, now_utc_str, get_cutoff_timestamp
 from utils.text_cleaner import clean_body
+from utils.language_utils import detect_language
 
 BASE_URL = "https://www.reddit.com"
 OLD_BASE_URL = "https://old.reddit.com"
@@ -25,11 +26,8 @@ def _load_page(context: BrowserContext, url: str) -> Optional[Page]:
         return None
 
 
-def _parse_timestamp(data_timestamp: str) -> float:
-    try:
-        return float(data_timestamp)
-    except Exception:
-        return 0.0
+def _compute_trend_score(score: int, num_comments: int) -> float:
+    return round(score + num_comments * 2.0, 2)
 
 
 def _get_posts_raw(
@@ -51,7 +49,6 @@ def _get_posts_raw(
             break
 
         try:
-            # Each post is a div with class "thing"
             things = page.query_selector_all("div.thing[data-fullname^='t3_']")
             if not things:
                 logger.debug(f"No posts found on page for r/{subreddit}")
@@ -68,7 +65,6 @@ def _get_posts_raw(
                 except Exception as e:
                     logger.debug(f"Error extracting post: {e}")
 
-            # Get "next" link for pagination
             next_btn = page.query_selector("a[rel='nofollow next']")
             if next_btn and len(collected) < limit:
                 href = next_btn.get_attribute("href") or ""
@@ -93,20 +89,13 @@ def _get_posts_raw(
 
 
 def _extract_post_from_thing(thing, subreddit: str) -> Optional[dict]:
-    def attr(sel, attribute):
-        el = thing.query_selector(sel)
-        return el.get_attribute(attribute) if el else ""
-
-    def text(sel):
-        el = thing.query_selector(sel)
-        return el.inner_text().strip() if el else ""
-
     post_id = (thing.get_attribute("data-fullname") or "").replace("t3_", "")
     if not post_id:
         return None
 
     title_el = thing.query_selector("a.title")
     title = title_el.inner_text().strip() if title_el else ""
+
     url = title_el.get_attribute("href") if title_el else ""
     if url and url.startswith("/"):
         url = f"{OLD_BASE_URL}{url}"
@@ -127,7 +116,10 @@ def _extract_post_from_thing(thing, subreddit: str) -> Optional[dict]:
     timestamp_str = thing.get_attribute("data-timestamp") or "0"
     created_utc = float(timestamp_str) / 1000 if timestamp_str != "0" else 0.0
 
-    num_comments_str = text("a.comments")
+    num_comments_str = ""
+    comments_el = thing.query_selector("a.comments")
+    if comments_el:
+        num_comments_str = comments_el.inner_text().strip()
     num_comments = 0
     m = re.search(r"(\d[\d,]*)\s+comment", num_comments_str)
     if m:
@@ -137,13 +129,13 @@ def _extract_post_from_thing(thing, subreddit: str) -> Optional[dict]:
     flair = flair_el.inner_text().strip() if flair_el else None
 
     domain = thing.get_attribute("data-domain") or ""
-    is_self = thing.get_attribute("data-type") == "self"
+    is_self = domain.startswith("self.")
 
     return {
         "id": post_id,
         "subreddit": subreddit,
         "title": title,
-        "selftext": "",
+        "selftext": "",  # fetched separately
         "url": url,
         "permalink": permalink,
         "created_utc": created_utc,
@@ -155,6 +147,25 @@ def _extract_post_from_thing(thing, subreddit: str) -> Optional[dict]:
         "is_video": False,
         "domain": domain,
     }
+
+
+def _fetch_selftext(context: BrowserContext, permalink: str) -> str:
+    """Visit post page on old.reddit.com and extract selftext."""
+    old_url = permalink.replace("www.reddit.com", "old.reddit.com")
+    page = _load_page(context, old_url)
+    if not page:
+        return ""
+    try:
+        # selftext lives in div.usertext-body > div.md of the first .thing
+        el = page.query_selector("div.thing div.usertext-body div.md")
+        if el:
+            return clean_body(el.inner_text().strip())
+        return ""
+    except Exception as e:
+        logger.debug(f"selftext fetch error: {e}")
+        return ""
+    finally:
+        page.close()
 
 
 def _get_comments_raw(
@@ -202,6 +213,8 @@ def _extract_comment(thing, post_id: str, subreddit: str) -> Optional[dict]:
     if body in ("[deleted]", "[removed]", ""):
         return None
 
+    author = thing.get_attribute("data-author") or ""
+
     score_str = thing.get_attribute("data-score") or "0"
     try:
         score = int(score_str)
@@ -219,8 +232,8 @@ def _extract_comment(thing, post_id: str, subreddit: str) -> Optional[dict]:
     if permalink and "old.reddit.com" in permalink:
         permalink = permalink.replace("old.reddit.com", "www.reddit.com")
 
-    time_el = thing.query_selector("time")
     created_utc = 0.0
+    time_el = thing.query_selector("time")
     if time_el:
         ts = time_el.get_attribute("datetime") or ""
         try:
@@ -234,6 +247,7 @@ def _extract_comment(thing, post_id: str, subreddit: str) -> Optional[dict]:
         "id": comment_id,
         "post_id": post_id,
         "subreddit": subreddit,
+        "author": author,
         "body": body,
         "score": score,
         "created_utc": created_utc,
@@ -243,11 +257,13 @@ def _extract_comment(thing, post_id: str, subreddit: str) -> Optional[dict]:
 
 
 def _build_post(raw: dict, matched_keywords: List[str], sort_mode: str) -> RedditPost:
+    selftext = raw.get("selftext", "")
+    lang = detect_language(f"{raw.get('title', '')} {selftext}")
     return RedditPost(
         post_id=raw.get("id", ""),
         subreddit=raw.get("subreddit", ""),
         title=raw.get("title", ""),
-        selftext=clean_body(raw.get("selftext", "")),
+        selftext=selftext,
         url=raw.get("url", ""),
         permalink=raw.get("permalink", ""),
         created_utc=raw.get("created_utc", 0),
@@ -262,17 +278,25 @@ def _build_post(raw: dict, matched_keywords: List[str], sort_mode: str) -> Reddi
         matched_keywords=", ".join(matched_keywords),
         sort_mode=sort_mode,
         collected_at=now_utc_str(),
+        post_text_length=len(selftext),
+        language_detected=lang,
+        trend_score=_compute_trend_score(raw.get("score", 0), raw.get("num_comments", 0)),
     )
 
 
 def _build_comment(raw: dict, post_title: str, keywords: List[str]) -> RedditComment:
-    matched = comment_matches(raw.get("body", ""), keywords)
+    body = clean_body(raw.get("body", ""))
+    author = raw.get("author", "")
+    matched = comment_matches(body, keywords)
+    lang = detect_language(body)
+    bot = is_bot_comment(author, body)
     return RedditComment(
         comment_id=raw.get("id", ""),
         post_id=raw.get("post_id", ""),
         subreddit=raw.get("subreddit", ""),
         post_title=post_title,
-        body=clean_body(raw.get("body", "")),
+        author=author,
+        body=body,
         score=raw.get("score", 0),
         created_utc=raw.get("created_utc", 0),
         created_date=utc_timestamp_to_date(raw.get("created_utc", 0)),
@@ -280,6 +304,9 @@ def _build_comment(raw: dict, post_title: str, keywords: List[str]) -> RedditCom
         permalink=raw.get("permalink", ""),
         matched_keywords=", ".join(matched),
         collected_at=now_utc_str(),
+        comment_text_length=len(body),
+        language_detected=lang,
+        is_bot_comment=bot,
     )
 
 
@@ -293,7 +320,12 @@ def parse_subreddits(
     max_comments: int,
     min_score: int,
     min_comments: int,
+    fetch_selftext: bool = True,
+    filter_bots: bool = True,
+    language_mode: str = "mixed",
 ) -> tuple[List[RedditPost], List[RedditComment]]:
+    from utils.language_utils import passes_language_filter
+
     context = reddit["context"]
     all_posts: List[RedditPost] = []
     all_comments: List[RedditComment] = []
@@ -310,7 +342,18 @@ def parse_subreddits(
             if not ok:
                 continue
 
+            # Fetch selftext for self-posts
+            if fetch_selftext and raw.get("is_self") and raw.get("permalink"):
+                logger.debug(f"Fetching selftext for '{raw.get('title', '')[:60]}'")
+                raw["selftext"] = _fetch_selftext(context, raw["permalink"])
+                time.sleep(0.8)
+
             post = _build_post(raw, matched_kws, sort)
+
+            if not passes_language_filter(post.language_detected, language_mode):
+                logger.debug(f"Skipping post (language={post.language_detected}): {post.title[:60]}")
+                continue
+
             all_posts.append(post)
             matched_count += 1
 
@@ -320,9 +363,14 @@ def parse_subreddits(
                 )
                 for rc in raw_comments:
                     comment = _build_comment(rc, raw.get("title", ""), keywords)
+                    if filter_bots and comment.is_bot_comment:
+                        logger.debug(f"Filtered bot comment from '{comment.author}'")
+                        continue
+                    if not passes_language_filter(comment.language_detected, language_mode):
+                        continue
                     all_comments.append(comment)
-                if raw_comments:
-                    logger.debug(f"  └─ {len(raw_comments)} comments for '{raw.get('title','')[:60]}'")
+
+                logger.debug(f"  └─ {len(raw_comments)} comments for '{raw.get('title','')[:60]}'")
                 time.sleep(1)
 
         logger.info(f"r/{subreddit_name}: {matched_count} posts matched filters")

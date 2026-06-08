@@ -1,6 +1,5 @@
-from dataclasses import dataclass, field
-from typing import Optional, List
-from datetime import datetime
+from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -23,6 +22,9 @@ class RedditPost:
     matched_keywords: str
     sort_mode: str
     collected_at: str
+    post_text_length: int
+    language_detected: str
+    trend_score: float
 
     def to_dict(self) -> dict:
         return {
@@ -44,6 +46,9 @@ class RedditPost:
             "matched_keywords": self.matched_keywords,
             "sort_mode": self.sort_mode,
             "collected_at": self.collected_at,
+            "post_text_length": self.post_text_length,
+            "language_detected": self.language_detected,
+            "trend_score": self.trend_score,
         }
 
 
@@ -53,6 +58,7 @@ class RedditComment:
     post_id: str
     subreddit: str
     post_title: str
+    author: str
     body: str
     score: int
     created_utc: float
@@ -61,6 +67,9 @@ class RedditComment:
     permalink: str
     matched_keywords: str
     collected_at: str
+    comment_text_length: int
+    language_detected: str
+    is_bot_comment: bool
 
     def to_dict(self) -> dict:
         return {
@@ -68,6 +77,7 @@ class RedditComment:
             "post_id": self.post_id,
             "subreddit": self.subreddit,
             "post_title": self.post_title,
+            "author": self.author,
             "body": self.body,
             "score": self.score,
             "created_utc": self.created_utc,
@@ -76,4 +86,7 @@ class RedditComment:
             "permalink": self.permalink,
             "matched_keywords": self.matched_keywords,
             "collected_at": self.collected_at,
+            "comment_text_length": self.comment_text_length,
+            "language_detected": self.language_detected,
+            "is_bot_comment": self.is_bot_comment,
         }

@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple
 from utils.text_cleaner import normalize_text
+from config import BOT_AUTHORS, BOT_PHRASES
 
 
 def matches_keywords(text: str, keywords: List[str]) -> List[str]:
@@ -22,10 +23,8 @@ def post_matches_data(
         return False, []
     if raw.get("num_comments", 0) < min_comments:
         return False, []
-
     if not keywords:
         return True, []
-
     combined = f"{raw.get('title', '')} {raw.get('selftext', '')}"
     matched = matches_keywords(combined, keywords)
     return bool(matched), matched
@@ -35,3 +34,12 @@ def comment_matches(body: str, keywords: List[str]) -> List[str]:
     if not keywords:
         return []
     return matches_keywords(body, keywords)
+
+
+def is_bot_comment(author: str, body: str) -> bool:
+    if not author:
+        return False
+    if author.lower() in BOT_AUTHORS:
+        return True
+    body_lower = body.lower()
+    return any(phrase in body_lower for phrase in BOT_PHRASES)
