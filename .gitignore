@@ -1,0 +1,8 @@
+﻿.env
+exports/*
+!exports/.gitkeep
+*.log
+__pycache__/
+*.pyc
+.idea/
+.vscode/
