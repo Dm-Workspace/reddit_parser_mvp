@@ -40,6 +40,37 @@ def project_menu(project_id: str) -> InlineKeyboardMarkup:
     ])
 
 
+def after_project_created(project_id: str) -> InlineKeyboardMarkup:
+    """Shown after a project is successfully created."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Создать монитор",    callback_data=f"proj:create_monitor:{project_id}")],
+        [InlineKeyboardButton("📊 Мониторы проекта",  callback_data=f"proj:monitors:{project_id}"),
+         InlineKeyboardButton("⚙️ Настройки",         callback_data=f"proj:open:{project_id}")],
+        [InlineKeyboardButton("📁 Мои проекты",       callback_data="menu:projects")],
+        [InlineKeyboardButton("🏠 Главное меню",      callback_data="menu:main")],
+    ])
+
+
+def after_monitor_created(monitor_id: str, project_id: str) -> InlineKeyboardMarkup:
+    """Shown after a monitor is successfully created."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Запустить сейчас", callback_data=f"run_start:{monitor_id}")],
+        [InlineKeyboardButton("📊 Открыть монитор",  callback_data=f"mon:open:{monitor_id}"),
+         InlineKeyboardButton("🕒 Расписание",       callback_data=f"mon:schedule:{monitor_id}")],
+        [InlineKeyboardButton("📁 К проекту",        callback_data=f"proj:open:{project_id}")],
+        [InlineKeyboardButton("🏠 Главное меню",     callback_data="menu:main")],
+    ])
+
+
+def retry_project_id() -> InlineKeyboardMarkup:
+    """Shown when user enters invalid project_id."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📁 Мои проекты",     callback_data="menu:projects")],
+        [InlineKeyboardButton("🔁 Ввести снова",    callback_data="mon:retry_pid")],
+        [InlineKeyboardButton("🏠 Главное меню",    callback_data="menu:main")],
+    ])
+
+
 def confirm_archive(entity: str, entity_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Архивировать", callback_data=f"confirm_archive:{entity}:{entity_id}"),
@@ -61,14 +92,18 @@ def monitor_list(monitors, project_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def monitor_menu(monitor_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Запустить",       callback_data=f"mon:run:{monitor_id}")],
-        [InlineKeyboardButton("🕒 Расписание",      callback_data=f"mon:schedule:{monitor_id}"),
-         InlineKeyboardButton("⚙️ Изменить",        callback_data=f"mon:edit:{monitor_id}")],
-        [InlineKeyboardButton("📊 История запусков",callback_data=f"mon:runs:{monitor_id}"),
-         InlineKeyboardButton("🗄 Архив",           callback_data=f"mon:archive:{monitor_id}")],
-    ])
+def monitor_menu(monitor_id: str, project_id: str = None) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton("▶️ Запустить",        callback_data=f"mon:run:{monitor_id}")],
+        [InlineKeyboardButton("🕒 Расписание",       callback_data=f"mon:schedule:{monitor_id}"),
+         InlineKeyboardButton("⚙️ Изменить",         callback_data=f"mon:edit:{monitor_id}")],
+        [InlineKeyboardButton("📊 История запусков", callback_data=f"mon:runs:{monitor_id}"),
+         InlineKeyboardButton("🗄 Архив",            callback_data=f"mon:archive:{monitor_id}")],
+    ]
+    if project_id:
+        rows.append([InlineKeyboardButton("◀️ К проекту", callback_data=f"proj:open:{project_id}")])
+    rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="menu:main")])
+    return InlineKeyboardMarkup(rows)
 
 
 def run_confirm_keyboard(monitor_id: str, force: bool = False) -> InlineKeyboardMarkup:

@@ -23,11 +23,12 @@ from loguru import logger
 from bot.auth import admin_only, get_uid
 from bot.keyboards import (
     preset_list, run_mode_choice, schedule_frequency,
-    cancel_button, skip_cancel,
+    cancel_button, skip_cancel, after_monitor_created, retry_project_id,
 )
 from bot.states import (
     CM_NAME, CM_DESC, CM_SUBREDDIT_CHOICE, CM_SUBREDDIT_CUSTOM,
     CM_KEYWORD_CHOICE, CM_KEYWORD_CUSTOM, CM_RUN_MODE, CM_SCHEDULE, CM_CONFIRM,
+    CM_WAIT_PROJECT_ID,
 )
 from storage.models import Monitor, MAX_ACTIVE_MONITORS_PER_PROJECT
 from storage import database as db
@@ -46,50 +47,111 @@ def _clear(context):
     context.user_data.pop("create_monitor", None)
 
 
-# ── Entry ──────────────────────────────────────────────────────────────────────
+# ── Shared: validate project and kick off name step ───────────────────────────
 
-@admin_only
-async def start_create_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # project_id from args or stored
-    project_id = None
-    if context.args:
-        project_id = context.args[0].strip()
-    if not project_id:
-        await update.message.reply_text(
-            "Укажите project_id:\n/create_monitor <project_id>\n\nСмотрите /projects"
-        )
-        return ConversationHandler.END
-
-    project = db.get_project(project_id)
-    if not project:
-        await update.message.reply_text(f"❌ Проект <code>{project_id}</code> не найден.", parse_mode="HTML")
-        return ConversationHandler.END
-
+async def _begin_monitor_for_project(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    project_id: str,
+    *,
+    is_callback: bool = False,
+) -> int:
+    """Validate project, set up draft, ask for monitor name. Returns next state."""
     uid = get_uid(update)
+    project = db.get_project(project_id)
+
+    reply = update.callback_query.edit_message_text if is_callback else update.message.reply_text
+
+    if not project:
+        await reply(
+            f"❌ Проект <code>{project_id}</code> не найден.\n\n"
+            f"Проверьте правильность ID или выберите из своих проектов:",
+            parse_mode="HTML",
+            reply_markup=retry_project_id(),
+        )
+        return CM_WAIT_PROJECT_ID  # stay — allow re-input
+
     if project.owner_telegram_id != uid and project.owner_telegram_id != 0:
-        await update.message.reply_text("⛔ Это не ваш проект.")
-        return ConversationHandler.END
+        await reply("⛔ Это не ваш проект.", reply_markup=retry_project_id())
+        return CM_WAIT_PROJECT_ID
 
     active_monitors = db.count_active_monitors(project_id)
     if active_monitors >= MAX_ACTIVE_MONITORS_PER_PROJECT:
-        await update.message.reply_text(
-            f"⚠️ В проекте уже {active_monitors} активных мониторов (макс. {MAX_ACTIVE_MONITORS_PER_PROJECT}).\n"
-            f"Архивируйте один перед созданием нового."
+        await reply(
+            f"⚠️ В проекте уже {active_monitors} активных мониторов "
+            f"(макс. {MAX_ACTIVE_MONITORS_PER_PROJECT}).\n"
+            f"Архивируйте один перед созданием нового.",
+            parse_mode="HTML",
         )
         return ConversationHandler.END
 
     _clear(context)
-    _draft(context)["project_id"] = project_id
+    _draft(context)["project_id"]   = project_id
     _draft(context)["project_name"] = project.name
 
-    await update.message.reply_text(
+    text = (
         f"📡 <b>Новый монитор</b> для проекта <b>{project.name}</b>\n\n"
         f"Шаг 1/7: Введите <b>название</b> монитора:\n"
-        f"<i>Например: Wellness Hot, Rising trends, Monthly top</i>",
+        f"<i>Например: Wellness Hot, Rising trends, Monthly top</i>"
+    )
+    await reply(text, parse_mode="HTML", reply_markup=cancel_button())
+    return CM_NAME
+
+
+# ── Entry — /create_monitor [project_id] ──────────────────────────────────────
+
+@admin_only
+async def start_create_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Entry via command. Two modes:
+      /create_monitor <project_id>  →  validate & start immediately
+      /create_monitor               →  ask for project_id, enter CM_WAIT_PROJECT_ID
+    """
+    if context.args:
+        return await _begin_monitor_for_project(update, context, context.args[0].strip())
+
+    # No project_id — ask for it
+    uid = get_uid(update)
+    projects = db.list_projects(owner_telegram_id=uid)
+    proj_list_text = ""
+    if projects:
+        proj_list_text = "\n\n<b>Ваши проекты:</b>\n" + "\n".join(
+            f"• <code>{p.id}</code> — {p.name}" for p in projects[:5]
+        )
+
+    await update.message.reply_text(
+        f"📡 <b>Создание монитора</b>\n\n"
+        f"Введите <b>project_id</b> проекта, в котором создать монитор:"
+        f"{proj_list_text}",
         parse_mode="HTML",
         reply_markup=cancel_button(),
     )
-    return CM_NAME
+    return CM_WAIT_PROJECT_ID
+
+
+# ── Entry — callback from inline button (proj:create_monitor:<id>) ─────────────
+
+async def start_create_monitor_from_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Entry via inline button. callback_data = "proj:create_monitor:<project_id>"
+    """
+    query = update.callback_query
+    await query.answer()
+    project_id = query.data.split(":", 2)[2]
+    return await _begin_monitor_for_project(
+        update, context, project_id, is_callback=True
+    )
+
+
+# ── CM_WAIT_PROJECT_ID: receive project_id as text ────────────────────────────
+
+async def handle_project_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Receive project_id typed by user. Validates and proceeds to CM_NAME.
+    Stays in CM_WAIT_PROJECT_ID if invalid.
+    """
+    project_id = update.message.text.strip()
+    return await _begin_monitor_for_project(update, context, project_id)
 
 
 # ── Step 1: Name ───────────────────────────────────────────────────────────────
@@ -406,13 +468,10 @@ async def handle_monitor_confirm(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(
         f"✅ <b>Монитор создан!</b>\n\n"
         f"📡 <b>{monitor.name}</b>\n"
-        f"🆔 <code>{monitor_id}</code>\n\n"
-        f"Запустить монитор сейчас?",
+        f"🆔 <code>{monitor_id}</code>\n"
+        f"📁 Проект: <b>{monitor.project_id}</b>",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("▶️ Запустить", callback_data=f"run_start:{monitor_id}"),
-            InlineKeyboardButton("⏭ Позже",     callback_data="cancel_action"),
-        ]]),
+        reply_markup=after_monitor_created(monitor_id, monitor.project_id),
     )
     return ConversationHandler.END
 
@@ -429,12 +488,31 @@ async def cancel_create_monitor(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 
+# ── Retry pid button handler (stays in CM_WAIT_PROJECT_ID) ────────────────────
+
+async def _cb_retry_pid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "Введите <b>project_id</b> проекта ещё раз:",
+        parse_mode="HTML",
+        reply_markup=cancel_button(),
+    )
+    return CM_WAIT_PROJECT_ID
+
+
 # ── ConversationHandler factory ────────────────────────────────────────────────
 
 def build_create_monitor_handler() -> ConversationHandler:
     return ConversationHandler(
-        entry_points=[CommandHandler("create_monitor", start_create_monitor)],
+        entry_points=[
+            CommandHandler("create_monitor", start_create_monitor),
+            CallbackQueryHandler(start_create_monitor_from_cb, pattern=r"^proj:create_monitor:"),
+        ],
         states={
+            CM_WAIT_PROJECT_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_id_input),
+                CallbackQueryHandler(_cb_retry_pid, pattern=r"^mon:retry_pid$"),
+            ],
             CM_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_monitor_name)],
             CM_DESC: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_monitor_desc),

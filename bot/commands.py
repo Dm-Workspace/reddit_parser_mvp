@@ -459,6 +459,17 @@ async def cmd_presets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
+# ── /menu ──────────────────────────────────────────────────────────────────────
+
+@admin_only
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🏠 <b>Главное меню</b>",
+        parse_mode="HTML",
+        reply_markup=main_menu(),
+    )
+
+
 # ── /status ────────────────────────────────────────────────────────────────────
 
 @admin_only
@@ -567,7 +578,13 @@ async def handle_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     data = query.data  # e.g. "menu:projects"
     action = data.split(":")[1]
 
-    if action == "projects":
+    if action == "main":
+        await query.edit_message_text(
+            "🏠 <b>Главное меню</b>",
+            parse_mode="HTML",
+            reply_markup=main_menu(),
+        )
+    elif action == "projects":
         uid = get_uid(update)
         projects = db.list_projects(owner_telegram_id=uid)
         if not projects:
@@ -634,6 +651,8 @@ async def handle_proj_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=monitor_list(monitors, pid),
         )
     elif action == "create_monitor":
+        # Handled by the ConversationHandler entry_point (proj:create_monitor:<id>).
+        # This branch is a safety fallback only.
         await query.edit_message_text(
             f"Используйте: /create_monitor {pid}"
         )
@@ -667,7 +686,7 @@ async def handle_mon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"🆔 <code>{m.id}</code>\n"
             f"⚙️ {m.run_mode} | {sched}{last_str}",
             parse_mode="HTML",
-            reply_markup=monitor_menu(mid),
+            reply_markup=monitor_menu(mid, project_id=m.project_id),
         )
     elif action == "run":
         await _trigger_run(update, context, mid, force=False)

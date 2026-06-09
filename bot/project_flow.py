@@ -17,7 +17,7 @@ from telegram.ext import (
 from loguru import logger
 
 from bot.auth import admin_only, get_uid
-from bot.keyboards import language_choice, yes_no, cancel_button
+from bot.keyboards import language_choice, yes_no, cancel_button, after_project_created
 from bot.states import CP_NAME, CP_DESC, CP_NICHE, CP_LANG, CP_CONFIRM
 from storage.models import Project, MAX_ACTIVE_PROJECTS_PER_USER
 from storage import database as db
@@ -179,10 +179,9 @@ async def handle_project_confirm(update: Update, context: ContextTypes.DEFAULT_T
         f"📁 <b>{project.name}</b>\n"
         f"🆔 ID: <code>{project_id}</code>\n"
         f"🎯 Ниша: {project.niche or '—'}\n"
-        f"🌐 Язык: {project.output_language.upper()}\n\n"
-        f"Следующий шаг — создать первый монитор:\n"
-        f"/create_monitor {project_id}",
+        f"🌐 Язык: {project.output_language.upper()}",
         parse_mode="HTML",
+        reply_markup=after_project_created(project_id),
     )
     return ConversationHandler.END
 

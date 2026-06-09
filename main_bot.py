@@ -69,12 +69,13 @@ def main():
 
     # ── Simple commands ────────────────────────────────────────────────────────
     from bot.commands import (
-        cmd_start, cmd_projects, cmd_monitors, cmd_run,
+        cmd_start, cmd_menu, cmd_projects, cmd_monitors, cmd_run,
         cmd_schedule, cmd_next_runs, cmd_runs, cmd_latest,
         cmd_download, cmd_drive, cmd_presets, cmd_status,
         handle_unknown,
     )
     app.add_handler(CommandHandler("start",             cmd_start))
+    app.add_handler(CommandHandler("menu",              cmd_menu))
     app.add_handler(CommandHandler("projects",          cmd_projects))
     app.add_handler(CommandHandler("monitors",          cmd_monitors))
     app.add_handler(CommandHandler("run",               cmd_run))

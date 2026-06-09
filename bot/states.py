@@ -22,7 +22,8 @@ ConversationHandler state constants.
     CM_RUN_MODE,
     CM_SCHEDULE,
     CM_CONFIRM,
-) = range(9)
+    CM_WAIT_PROJECT_ID,   # waiting for project_id text input (no-arg /create_monitor)
+) = range(10)
 
 # ── Schedule Monitor ───────────────────────────────────────────────────────────
 (
