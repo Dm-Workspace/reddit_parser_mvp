@@ -115,6 +115,19 @@ def main():
     # ── Fallback: unknown text/commands ────────────────────────────────────────
     app.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
 
+    # ── Global error handler ──────────────────────────────────────────────────
+    async def error_handler(upd, ctx):
+        logger.exception(f"Unhandled Telegram error: {ctx.error}", exc_info=ctx.error)
+        try:
+            if upd and upd.effective_message:
+                await upd.effective_message.reply_text(
+                    "⚠️ Произошла ошибка. Вернитесь в меню: /menu"
+                )
+        except Exception:
+            pass
+
+    app.add_error_handler(error_handler)
+
     logger.info("🤖 Telegram bot started. Ctrl+C to stop.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

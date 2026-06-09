@@ -50,5 +50,23 @@ def admin_only(func):
     return wrapped
 
 
-def get_uid(update: Update) -> int:
-    return update.effective_user.id if update.effective_user else 0
+def get_uid(obj) -> int:
+    """
+    Extract Telegram user_id from any of:
+      Update, CallbackQuery, Message, User, or None.
+    """
+    if obj is None:
+        return 0
+    # telegram.Update — has effective_user
+    if hasattr(obj, "effective_user") and obj.effective_user:
+        return obj.effective_user.id
+    # telegram.CallbackQuery or Message — has from_user
+    if hasattr(obj, "from_user") and obj.from_user:
+        return obj.from_user.id
+    # CallbackQuery.message.from_user fallback
+    if hasattr(obj, "message") and obj.message and hasattr(obj.message, "from_user") and obj.message.from_user:
+        return obj.message.from_user.id
+    # telegram.User — has id directly
+    if hasattr(obj, "id") and isinstance(obj.id, int):
+        return obj.id
+    return 0

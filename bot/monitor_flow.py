@@ -180,18 +180,15 @@ async def handle_monitor_desc(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def skip_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     _draft(context)["description"] = ""
-    return await _ask_subreddit_preset(update.callback_query, context)
+    return await _ask_subreddit_preset(update, context)
 
 
-async def _ask_subreddit_preset(target, context):
-    uid = get_uid(target)
+async def _ask_subreddit_preset(update: Update, context):
+    uid = get_uid(update)
     presets = db.list_subreddit_presets(owner_telegram_id=uid, include_system=True)
     msg = "Шаг 3/7: Выберите <b>subreddit preset</b> или введите вручную:"
     kb = preset_list(presets, "sr")
-    if hasattr(target, "message"):
-        await target.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
-    else:
-        await target.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+    await update.effective_message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
     return CM_SUBREDDIT_CHOICE
 
 
@@ -213,7 +210,7 @@ async def handle_subreddit_preset(update: Update, context: ContextTypes.DEFAULT_
 
     _draft(context)["subreddit_preset_id"] = preset_id
     _draft(context)["custom_subreddits"] = "[]"
-    return await _ask_keyword_preset(query, context)
+    return await _ask_keyword_preset(update, context)
 
 
 async def handle_custom_subreddits(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -227,15 +224,12 @@ async def handle_custom_subreddits(update: Update, context: ContextTypes.DEFAULT
     return await _ask_keyword_preset(update, context)
 
 
-async def _ask_keyword_preset(target, context):
-    uid = get_uid(target)
+async def _ask_keyword_preset(update: Update, context):
+    uid = get_uid(update)
     presets = db.list_keyword_presets(owner_telegram_id=uid, include_system=True)
     msg = "Шаг 4/7: Выберите <b>keyword preset</b> или введите вручную:"
     kb = preset_list(presets, "kw")
-    if hasattr(target, "message"):
-        await target.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
-    else:
-        await target.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+    await update.effective_message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
     return CM_KEYWORD_CHOICE
 
 
@@ -257,7 +251,7 @@ async def handle_keyword_preset(update: Update, context: ContextTypes.DEFAULT_TY
 
     _draft(context)["keyword_preset_id"] = preset_id
     _draft(context)["custom_keywords"] = "[]"
-    return await _ask_run_mode(query, context)
+    return await _ask_run_mode(update, context)
 
 
 async def handle_custom_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -271,13 +265,10 @@ async def handle_custom_keywords(update: Update, context: ContextTypes.DEFAULT_T
     return await _ask_run_mode(update, context)
 
 
-async def _ask_run_mode(target, context):
+async def _ask_run_mode(update: Update, context):
     msg = "Шаг 5/7: Выберите <b>режим запуска</b>:"
     kb = run_mode_choice()
-    if hasattr(target, "message"):
-        await target.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
-    else:
-        await target.message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
+    await update.effective_message.reply_text(msg, parse_mode="HTML", reply_markup=kb)
     return CM_RUN_MODE
 
 
@@ -340,7 +331,7 @@ async def handle_schedule_choice(update: Update, context: ContextTypes.DEFAULT_T
         return CM_SCHEDULE   # stay in schedule state, waiting for day selection
 
     # Jump to confirmation
-    return await _show_confirm(query, context)
+    return await _show_confirm(update, context)
 
 
 async def handle_schedule_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -393,7 +384,7 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ── Step 7: Confirm ────────────────────────────────────────────────────────────
 
-async def _show_confirm(target, context):
+async def _show_confirm(update: Update, context):
     from bot.schedule_utils import frequency_label
     draft = _draft(context)
 
@@ -424,11 +415,7 @@ async def _show_confirm(target, context):
         InlineKeyboardButton("✅ Создать",  callback_data="mon_confirm:yes"),
         InlineKeyboardButton("❌ Отмена",   callback_data="cancel_conv"),
     ]])
-
-    if hasattr(target, "message"):
-        await target.message.reply_text(summary, parse_mode="HTML", reply_markup=kb)
-    else:
-        await target.edit_message_text(summary, parse_mode="HTML", reply_markup=kb)
+    await update.effective_message.reply_text(summary, parse_mode="HTML", reply_markup=kb)
     return CM_CONFIRM
 
 
