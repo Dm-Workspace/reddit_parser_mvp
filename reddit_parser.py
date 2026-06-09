@@ -7,7 +7,7 @@ from playwright.sync_api import BrowserContext, Page
 from reddit_models import (
     RedditPost, RedditComment,
     COMMENT_MATCH_DIRECT, COMMENT_MATCH_CONTEXT, COMMENT_MATCH_NONE,
-    detect_content_type, compute_analysis_priority, detect_pain_signal,
+    detect_content_type, compute_analysis_priority, detect_pain_signal, detect_text_status,
 )
 from reddit_filters import post_matches_data, comment_matches, is_bot_comment
 from utils.date_utils import utc_timestamp_to_date, now_utc_str, get_cutoff_timestamp
@@ -216,11 +216,13 @@ def _extract_comment(thing, post_id: str, subreddit: str) -> Optional[dict]:
 
     author = thing.get_attribute("data-author") or ""
 
-    score_str = thing.get_attribute("data-score") or "0"
+    raw_score = thing.get_attribute("data-score")
+    score_available = raw_score is not None and raw_score.strip() not in ("", "—", "null", "hidden")
     try:
-        score = int(score_str)
-    except ValueError:
-        score = 0
+        score = int(raw_score) if score_available else None
+    except (ValueError, TypeError):
+        score = None
+        score_available = False
 
     depth_str = thing.get_attribute("data-depth") or "0"
     try:
@@ -251,6 +253,7 @@ def _extract_comment(thing, post_id: str, subreddit: str) -> Optional[dict]:
         "author": author,
         "body": body,
         "score": score,
+        "score_available": score_available,
         "created_utc": created_utc,
         "depth": depth,
         "permalink": permalink,
@@ -288,6 +291,7 @@ def _build_post(raw: dict, matched_keywords: List[str], sort_mode: str) -> Reddi
         content_type=detect_content_type(raw),
         analysis_priority=compute_analysis_priority(trend, num_comments),
         pain_signal=detect_pain_signal(title, selftext),
+        text_status=detect_text_status(selftext, detect_content_type(raw)),
     )
 
 
@@ -299,10 +303,12 @@ def _build_comment(
     min_comment_length: int,
 ) -> Optional[RedditComment]:
     body = clean_body(raw.get("body", ""))
-    score = raw.get("score", 0)
+    score = raw.get("score")  # may be None if hidden
+    score_available = raw.get("score_available", False)
+    score_for_filter = score if score is not None else 0
 
     # Filter short low-value comments (unless high score)
-    if len(body) < min_comment_length and score <= 10:
+    if len(body) < min_comment_length and score_for_filter <= 10:
         return None
 
     author = raw.get("author", "")
@@ -335,6 +341,7 @@ def _build_comment(
         language_detected=lang,
         is_bot_comment=bot,
         comment_match_type=match_type,
+        comment_score_available=score_available,
     )
 
 

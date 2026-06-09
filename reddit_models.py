@@ -42,13 +42,25 @@ def compute_analysis_priority(trend_score: float, num_comments: int) -> str:
 
 
 def detect_pain_signal(title: str, selftext: str) -> str:
-    from config import PAIN_SIGNAL_MAPPING
+    from config import PAIN_SIGNAL_MAPPING, PAIN_SIGNAL_PRIORITY
     from utils.text_cleaner import normalize_text
     text = normalize_text(f"{title} {selftext}")
-    for signal, keywords in PAIN_SIGNAL_MAPPING.items():
+    for signal in PAIN_SIGNAL_PRIORITY:
+        keywords = PAIN_SIGNAL_MAPPING.get(signal, [])
         if any(normalize_text(kw) in text for kw in keywords):
             return signal
     return "other"
+
+
+def detect_text_status(selftext: str, content_type: str) -> str:
+    if content_type in ("external_link", "image", "video", "reddit_gallery"):
+        return "link_or_media"
+    length = len(selftext.strip())
+    if length >= 300:
+        return "full_text"
+    if length >= 1:
+        return "short_text"
+    return "empty_text"
 
 
 @dataclass
@@ -77,6 +89,7 @@ class RedditPost:
     content_type: str
     analysis_priority: str
     pain_signal: str
+    text_status: str
 
     def to_dict(self) -> dict:
         return {
@@ -104,6 +117,7 @@ class RedditPost:
             "content_type": self.content_type,
             "analysis_priority": self.analysis_priority,
             "pain_signal": self.pain_signal,
+            "text_status": self.text_status,
         }
 
 
@@ -126,6 +140,7 @@ class RedditComment:
     language_detected: str
     is_bot_comment: bool
     comment_match_type: str
+    comment_score_available: bool
 
     def to_dict(self) -> dict:
         return {
@@ -146,4 +161,5 @@ class RedditComment:
             "language_detected": self.language_detected,
             "is_bot_comment": self.is_bot_comment,
             "comment_match_type": self.comment_match_type,
+            "comment_score_available": self.comment_score_available,
         }

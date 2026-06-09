@@ -106,6 +106,23 @@ def main() -> None:
     else:
         keywords = []
 
+    # Auto language_mode: en-suffix presets default to en unless user explicitly set mixed
+    EN_PRESETS = {"wellness_en", "crm_en", "ai_en"}
+    RU_PRESETS = {"wellness_ru"}
+    UK_PRESETS = {"wellness_uk"}
+    effective_language_mode = args.language_mode
+    if effective_language_mode == "mixed":  # user did not explicitly override
+        kp = args.keyword_preset or ""
+        if kp in EN_PRESETS:
+            effective_language_mode = "en"
+            logger.info("Auto language_mode=en (keyword preset is English)")
+        elif kp in RU_PRESETS:
+            effective_language_mode = "ru"
+            logger.info("Auto language_mode=ru (keyword preset is Russian)")
+        elif kp in UK_PRESETS:
+            effective_language_mode = "uk"
+            logger.info("Auto language_mode=uk (keyword preset is Ukrainian)")
+
     # Resolve run mode defaults, then apply CLI overrides
     if args.run_mode:
         mode = RUN_MODES[args.run_mode]
@@ -134,7 +151,7 @@ def main() -> None:
     logger.info(f"Limit          : {limit}/sub   Comments: {max_comments}/post")
     logger.info(f"Min score      : {min_score}   Min comments: {min_comments_count}")
     logger.info(f"Min cmnt len   : {args.min_comment_length} chars")
-    logger.info(f"Language       : {args.language_mode}   Bots: {'filtered' if filter_bots else 'kept'}")
+    logger.info(f"Language       : {effective_language_mode}   Bots: {'filtered' if filter_bots else 'kept'}")
     logger.info(f"Fetch body     : {fetch_selftext}   Export: {args.export}")
     logger.info("=" * 64)
 
@@ -152,7 +169,7 @@ def main() -> None:
         "min_score": min_score,
         "min_comments": min_comments_count,
         "min_comment_length": args.min_comment_length,
-        "language_mode": args.language_mode,
+        "language_mode": effective_language_mode,
         "filter_bots": filter_bots,
         "fetch_selftext": fetch_selftext,
         "export_format": args.export,
@@ -177,7 +194,7 @@ def main() -> None:
             min_comments=min_comments_count,
             fetch_selftext=fetch_selftext,
             filter_bots=filter_bots,
-            language_mode=args.language_mode,
+            language_mode=effective_language_mode,
             min_comment_length=args.min_comment_length,
         )
 
@@ -202,7 +219,7 @@ def main() -> None:
         if args.export == "xlsx":
             from exporters.excel_exporter import export_excel
             out = os.path.join(EXPORTS_DIR, f"{output_name}.xlsx") if args.output else None
-            result = export_excel(posts, comments, run_settings, out, dupes_removed)
+            result = export_excel(posts, comments, run_settings, out, dupes_removed, subreddits)
             logger.info(f"Output: {result}")
 
         elif args.export == "csv":

@@ -68,6 +68,7 @@ def _build_quality_rows(
     posts: List[RedditPost],
     comments: List[RedditComment],
     duplicate_posts_removed: int,
+    all_subreddits: List[str] = None,
 ) -> List[dict]:
     def r(metric, value=""):
         return {"metric": metric, "value": value}
@@ -138,6 +139,17 @@ def _build_quality_rows(
     for lang, cnt in sorted(comment_lang.items()):
         rows.append(r(f"  {lang}", cnt))
 
+    # Subreddits with zero posts collected
+    if all_subreddits:
+        subs_with_posts = set(p.subreddit for p in posts)
+        zero_subs = [s for s in all_subreddits if s not in subs_with_posts]
+        rows += [r(""), r("SUBREDDITS WITH ZERO RESULTS")]
+        if zero_subs:
+            for s in zero_subs:
+                rows.append(r(f"  r/{s}", "0 posts"))
+        else:
+            rows.append(r("  (all subreddits returned results)", ""))
+
     return rows
 
 
@@ -171,31 +183,33 @@ def _build_keyword_summary(
     posts: List[RedditPost],
     comments: List[RedditComment],
 ) -> List[dict]:
-    post_kw: Dict[str, int] = Counter()
-    kw_subreddits: Dict[str, Counter] = defaultdict(Counter)
+    post_kw: Counter = Counter()
+    kw_post_subs: Dict[str, Counter] = defaultdict(Counter)
+    kw_comment_subs: Dict[str, Counter] = defaultdict(Counter)
 
     for p in posts:
         for kw in p.matched_keywords.split(", "):
             kw = kw.strip()
             if kw:
                 post_kw[kw] += 1
-                kw_subreddits[kw][p.subreddit] += 1
+                kw_post_subs[kw][p.subreddit] += 1
 
-    comment_kw: Dict[str, int] = Counter()
+    comment_kw: Counter = Counter()
     for c in comments:
         for kw in c.matched_keywords.split(", "):
             kw = kw.strip()
             if kw:
                 comment_kw[kw] += 1
+                kw_comment_subs[kw][c.subreddit] += 1
 
     all_kw = set(post_kw) | set(comment_kw)
     rows = []
     for kw in sorted(all_kw, key=lambda k: -(post_kw.get(k, 0) + comment_kw.get(k, 0))):
         pc = post_kw.get(kw, 0)
         cc = comment_kw.get(kw, 0)
-        top_subs = ", ".join(
-            f"r/{s}({n})" for s, n in kw_subreddits[kw].most_common(3)
-        )
+        # Use post subreddits first; fall back to comment subreddits if keyword only in comments
+        sub_source = kw_post_subs[kw] if kw_post_subs[kw] else kw_comment_subs[kw]
+        top_subs = ", ".join(f"r/{s}({n})" for s, n in sub_source.most_common(3))
         rows.append({
             "keyword": kw,
             "posts_count": pc,
@@ -214,6 +228,7 @@ def export_excel(
     run_settings: Dict[str, Any],
     output_path: str = None,
     duplicate_posts_removed: int = 0,
+    all_subreddits: List[str] = None,
 ) -> str:
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     if not output_path:
@@ -287,7 +302,7 @@ def export_excel(
         _auto_fit(ws)
 
         # 6. Quality Check
-        q_rows = _build_quality_rows(posts, comments, duplicate_posts_removed)
+        q_rows = _build_quality_rows(posts, comments, duplicate_posts_removed, all_subreddits)
         df_q = pd.DataFrame(q_rows)
         df_q.to_excel(writer, sheet_name="Quality Check", index=False)
         ws = writer.sheets["Quality Check"]

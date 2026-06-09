@@ -115,39 +115,67 @@ KEYWORD_PRESETS = {
     ],
 }
 
+# Order matters: first match wins. More specific signals first.
+PAIN_SIGNAL_PRIORITY = [
+    "hormone_women",
+    "gut_problem",
+    "brain_cognition",
+    "deficiency_problem",
+    "sleep_problem",
+    "anxiety_stress",
+    "low_energy",
+    "weight_metabolism",
+    "supplement_question",
+]
+
 PAIN_SIGNAL_MAPPING = {
-    "sleep_problem": [
-        "sleep", "insomnia", "tired", "fatigue", "can't sleep", "wake up",
-        "sleepless", "restless", "oversleeping", "nap", "melatonin",
-    ],
-    "anxiety_stress": [
-        "anxiety", "stress", "anxious", "panic", "nervous", "overwhelmed",
-        "cortisol", "burnout", "worry", "depression", "mood",
+    "hormone_women": [
+        "menopause", "perimenopause", "pcos", "estrogen", "progesterone",
+        "period", "hormones", "thyroid", "pms", "fertility", "endometriosis",
+        "hrt", "testosterone women",
     ],
     "gut_problem": [
-        "gut", "bloating", "ibs", "sibo", "constipation", "diarrhea",
-        "digestion", "microbiome", "probiotic", "stomach", "bowel",
-        "leaky gut", "crohn", "colitis",
-    ],
-    "low_energy": [
-        "energy", "fatigue", "exhausted", "brain fog", "no energy",
-        "tired", "lethargy", "adrenal", "crash", "sluggish",
-    ],
-    "supplement_question": [
-        "supplement", "vitamin", "magnesium", "zinc", "iron", "omega",
-        "fish oil", "b12", "d3", "dosage", "dose", "brand", "which supplement",
-    ],
-    "hormone_women": [
-        "menopause", "pcos", "estrogen", "progesterone", "perimenopause",
-        "period", "hormones", "thyroid", "pms", "fertility",
+        "gut health", "gut microbiome", "gut bacteria", "bloating", "ibs",
+        "sibo", "constipation", "diarrhea", "digestion", "microbiome",
+        "probiotic", "stomach pain", "bowel", "leaky gut", "crohn",
+        "colitis", "pooping", "stool", "gastro", "heartburn", "acid reflux",
     ],
     "brain_cognition": [
         "brain fog", "focus", "memory", "concentration", "nootropic",
         "cognitive", "adhd", "mental clarity", "smart drug", "lion's mane",
+        "brain repair", "neuroplasticity", "acetylcholine",
+    ],
+    "deficiency_problem": [
+        "deficiency", "deficient", "low vitamin", "vitamin d deficiency",
+        "b12 deficiency", "iron deficiency", "magnesium deficiency",
+        "zinc deficiency", "ferritin", "anemia", "low iron", "low b12",
+        "low vitamin d", "nutrient deficiency",
+    ],
+    "sleep_problem": [
+        "sleep quality", "insomnia", "can't sleep", "wake up at night",
+        "sleepless", "restless legs", "oversleeping", "sleep apnea",
+        "melatonin", "circadian", "sleep schedule",
+    ],
+    "anxiety_stress": [
+        "anxiety", "stress", "anxious", "panic attack", "nervous system",
+        "overwhelmed", "cortisol", "burnout", "worry", "depression", "mood",
+        "mental health", "calm",
+    ],
+    "low_energy": [
+        "low energy", "no energy", "always tired", "chronic fatigue",
+        "exhausted", "lethargy", "adrenal fatigue", "energy crash",
+        "sluggish", "afternoon crash",
     ],
     "weight_metabolism": [
-        "weight", "metabolism", "fat", "calorie", "lose weight", "obesity",
-        "bmi", "insulin", "blood sugar", "glucose", "keto", "diet",
+        "weight loss", "lose weight", "metabolism", "body fat", "calorie",
+        "obesity", "bmi", "insulin resistance", "blood sugar", "glucose",
+        "keto", "intermittent fasting", "creatine",
+    ],
+    "supplement_question": [
+        "which supplement", "best supplement", "supplement stack",
+        "what supplement", "supplement brand", "dosage", "dose", "taking supplement",
+        "fish oil", "omega 3", "magnesium glycinate", "vitamin d3",
+        "zinc supplement", "multivitamin",
     ],
 }
 
