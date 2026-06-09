@@ -1,9 +1,9 @@
-# Trend Intelligence Hub — Multi-Monitor System v5.3
+# Trend Intelligence Hub — Multi-Monitor System v5.4
 
 Universal Reddit trend parser with Telegram management, Railway cloud deployment,
 PostgreSQL metadata store, Google Drive file storage, and AI-ready Handoff JSON.
 
-**No Reddit API keys required** — uses Playwright (headless Chrome).  
+**No Reddit API keys required** — default mode uses public Reddit JSON endpoints.  
 **No hardcoded projects** — users create their own projects and monitors via Telegram.
 
 Repository: **https://github.com/Dm-Workspace/reddit_parser_mvp**  
@@ -378,14 +378,58 @@ Every run produces `{run_id}_handoff.json` uploaded to Google Drive:
 
 ---
 
+## Reddit Access Modes
+
+The parser supports **three Reddit backends** controlled by a single ENV variable.  
+**No Reddit API credentials are needed for the default mode.**
+
+### `REDDIT_ACCESS_MODE` values
+
+| Mode | Description | Credentials needed? |
+|------|-------------|---------------------|
+| `public_json` **(default)** | Requests-based client hitting `reddit.com/r/{sub}.json`. Fast, no OAuth. | ❌ None — just `REDDIT_USER_AGENT` |
+| `playwright` | Headless Chrome scraping of `old.reddit.com` (original v4/v5 behaviour). | ❌ None |
+| `oauth` | PRAW / Reddit OAuth API. Higher rate limits, but requires app registration. | ✅ `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` |
+| `auto` | Uses oauth if credentials are present; otherwise falls back to `public_json`. | ⚙️ Optional |
+
+**Minimal `.env` to get started (no Reddit registration needed):**
+```env
+REDDIT_ACCESS_MODE=public_json
+REDDIT_USER_AGENT=TrendIntelligenceHub/1.0
+```
+
+### Checking Reddit connectivity
+
+```bash
+python main_runner.py --reddit-check
+```
+
+Output example (public_json mode):
+```
+==================================================
+  Reddit Access Check
+==================================================
+  REDDIT_ACCESS_MODE   : public_json
+  selected_client      : public_json
+  user_agent_set       : YES
+  credentials_set      : NO (not needed for public_json/playwright)
+  test_subreddit       : Supplements
+  test_result          : ok
+  posts_sample_count   : 3
+  first_post_title     : Best magnesium form for sleep?
+==================================================
+```
+
+---
+
 ## Parser QA / Smoke Tests
 
 These commands test the **parser core** only — no Telegram, no Railway, no full DB required.  
 Google Drive upload is opt-in with `--upload-drive`.  
 SQLite fallback works locally out of the box.
 
-> **Prerequisite:** `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` must be set.  
-> Without them the command prints a clear error and exits with code 1.
+> **No OAuth credentials needed** in `public_json` or `playwright` mode.  
+> Credentials (`REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`) are required only for `REDDIT_ACCESS_MODE=oauth`.
 
 ---
 

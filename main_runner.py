@@ -273,6 +273,61 @@ def run_single_monitor(monitor_id: str) -> None:
 
 # ── Parser QA / Smoke test commands ──────────────────────────────────────────
 
+def cmd_reddit_check() -> None:
+    """
+    Quick connectivity check for the configured Reddit backend.
+    Fetches up to 3 posts from r/Supplements to verify the client works.
+    In public_json mode: no OAuth credentials needed.
+    """
+    from utils.logger import setup_logger
+    setup_logger("WARNING")
+
+    from reddit_client import (
+        create_reddit_client, close_reddit_client,
+        REDDIT_ACCESS_MODE, REDDIT_USER_AGENT,
+        REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET,
+        get_effective_mode,
+    )
+
+    effective = get_effective_mode()
+    ua_set    = bool(REDDIT_USER_AGENT)
+    creds_set = bool(REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET)
+
+    print()
+    print("=" * 50)
+    print("  Reddit Access Check")
+    print("=" * 50)
+    print(f"  REDDIT_ACCESS_MODE   : {REDDIT_ACCESS_MODE}")
+    print(f"  selected_client      : {effective}")
+    print(f"  user_agent_set       : {'YES' if ua_set else 'NO'}")
+    print(f"  credentials_set      : {'YES' if creds_set else 'NO (not needed for public_json/playwright)'}")
+    print(f"  test_subreddit       : Supplements")
+
+    client = None
+    try:
+        client = create_reddit_client()
+        posts  = client.get_posts_raw("Supplements", "hot", 3)
+        if posts:
+            print(f"  test_result          : ok")
+            print(f"  posts_sample_count   : {len(posts)}")
+            print(f"  first_post_title     : {(posts[0].get('title',''))[:60]}")
+        else:
+            print(f"  test_result          : warning — 0 posts returned")
+    except Exception as e:
+        print(f"  test_result          : error")
+        print(f"  error_message        : {e}")
+        sys.exit(1)
+    finally:
+        if client:
+            try:
+                close_reddit_client(client)
+            except Exception:
+                pass
+
+    print("=" * 50)
+    print()
+
+
 def cmd_parser_smoke_test(upload_drive: bool = False) -> None:
     """
     Run a small live Reddit parse to verify the parser stack end-to-end.
@@ -330,7 +385,8 @@ Admin / debug:
   python main_runner.py --list-monitors
   python main_runner.py --run-monitor <monitor_id>
 
-Parser QA / smoke tests (no Telegram/Railway required):
+Reddit / Parser QA (no Telegram/Railway required):
+  python main_runner.py --reddit-check
   python main_runner.py --parser-smoke-test
   python main_runner.py --parser-smoke-test --upload-drive
   python main_runner.py --parser-qa-file exports/smoke_test/.../smoke_*.xlsx
@@ -358,6 +414,10 @@ Parser QA / smoke tests (no Telegram/Railway required):
     parser.add_argument("--list-monitors",    action="store_true",
                         help="Show all monitors")
 
+    # Reddit check
+    parser.add_argument("--reddit-check",      action="store_true",
+                        help="Test Reddit client connectivity (no OAuth needed in public_json mode)")
+
     # Parser QA
     parser.add_argument("--parser-smoke-test", action="store_true",
                         help="Run live smoke test (Supplements+Biohackers, no DB write)")
@@ -377,7 +437,7 @@ def main():
         args.run_due_monitors, args.run_queued, args.run_monitor,
         args.db_check, args.init_db,
         args.list_runs, args.list_projects, args.list_monitors,
-        args.parser_smoke_test, args.parser_qa_file,
+        args.reddit_check, args.parser_smoke_test, args.parser_qa_file,
     ])
     if not any_action:
         parser.print_help()
@@ -402,6 +462,10 @@ def main():
 
     if args.list_monitors:
         cmd_list_monitors()
+        return
+
+    if args.reddit_check:
+        cmd_reddit_check()
         return
 
     if args.parser_smoke_test:

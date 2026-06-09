@@ -489,10 +489,25 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         drive_line = "❌ Ошибка импорта"
     lines.append(f"☁️ <b>Google Drive:</b> {drive_line}")
 
-    # ── Reddit API ────────────────────────────────────────────────────────────
-    has_reddit = bool(os.environ.get("REDDIT_CLIENT_ID") and os.environ.get("REDDIT_CLIENT_SECRET"))
-    reddit_line = "✅ Настроен" if has_reddit else "⚠️ Не настроен (нужен REDDIT_CLIENT_ID/SECRET)"
-    lines.append(f"🌐 <b>Reddit API:</b> {reddit_line}")
+    # ── Reddit access ─────────────────────────────────────────────────────────
+    try:
+        from reddit_client import get_reddit_status
+        rs = get_reddit_status()
+        mode = rs["access_mode"]
+        emode = rs["effective_mode"]
+        ua_ok = rs["user_agent_set"]
+        creds = rs["credentials_set"]
+        if emode == "oauth" and not creds:
+            reddit_line = f"❌ oauth mode but REDDIT_CLIENT_ID/SECRET missing"
+        elif not ua_ok:
+            reddit_line = f"⚠️ REDDIT_USER_AGENT not set"
+        elif mode == "auto":
+            reddit_line = f"✅ auto → {emode}"
+        else:
+            reddit_line = f"✅ {emode} (mode={mode})"
+    except Exception as e:
+        reddit_line = f"❌ {str(e)[:60]}"
+    lines.append(f"🌐 <b>Reddit:</b> {reddit_line}")
 
     # ── User stats ────────────────────────────────────────────────────────────
     lines.append("")

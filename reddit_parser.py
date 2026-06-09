@@ -346,7 +346,8 @@ def _build_comment(
 
 
 def parse_subreddits(
-    reddit: dict,
+    reddit,          # Client object (PublicJsonClient | PlaywrightClient | PrawClient)
+                     # OR legacy dict {"context": playwright_ctx} for backward compat
     subreddits: List[str],
     keywords: List[str],
     period: str,
@@ -360,14 +361,29 @@ def parse_subreddits(
     language_mode: str = "mixed",
     min_comment_length: int = 40,
 ) -> tuple[List[RedditPost], List[RedditComment]]:
-    context = reddit["context"]
+    # Backward compat: old code passed {"context": pw_context}
+    if isinstance(reddit, dict) and "context" in reddit:
+        from reddit_client import PlaywrightClient
+        _client = PlaywrightClient.__new__(PlaywrightClient)
+        _client.context = reddit["context"]
+        _client._ctx    = reddit["context"]
+        # Bind methods to use the injected context
+        import types
+        from reddit_client import PlaywrightClient as _PC
+        _client.get_posts_raw    = lambda sub, srt, lim, per="": _get_posts_raw(reddit["context"], sub, srt, lim)
+        _client.fetch_selftext   = lambda plink: _fetch_selftext(reddit["context"], plink)
+        _client.get_comments_raw = lambda sub, pid, plink, mc: _get_comments_raw(reddit["context"], sub, pid, plink, mc)
+        _client.close = lambda: None
+    else:
+        _client = reddit
+
     all_posts: List[RedditPost] = []
     all_comments: List[RedditComment] = []
     cutoff = get_cutoff_timestamp(period)
 
     for subreddit_name in subreddits:
         logger.info(f"Fetching r/{subreddit_name} [{sort}, limit={limit}]")
-        raw_posts = _get_posts_raw(context, subreddit_name, sort, limit)
+        raw_posts = _client.get_posts_raw(subreddit_name, sort, limit, period)
         logger.info(f"r/{subreddit_name}: got {len(raw_posts)} raw posts")
 
         sub_matched = 0
@@ -376,10 +392,15 @@ def parse_subreddits(
             if not ok:
                 continue
 
-            if fetch_selftext and raw.get("is_self") and raw.get("permalink"):
+            # Fetch selftext only if it's a self-post and selftext is empty
+            if (fetch_selftext and raw.get("is_self")
+                    and not (raw.get("selftext") or "").strip()
+                    and raw.get("permalink")):
                 logger.debug(f"Fetching selftext: '{raw.get('title', '')[:60]}'")
-                raw["selftext"] = _fetch_selftext(context, raw["permalink"])
-                time.sleep(0.8)
+                fetched = _client.fetch_selftext(raw["permalink"])
+                if fetched:
+                    raw["selftext"] = fetched
+                time.sleep(0.5)
 
             post = _build_post(raw, matched_kws, sort)
 
@@ -392,8 +413,8 @@ def parse_subreddits(
             post_has_keywords = bool(matched_kws)
 
             if max_comments > 0:
-                raw_comments = _get_comments_raw(
-                    context, subreddit_name, raw["id"], raw.get("permalink", ""), max_comments
+                raw_comments = _client.get_comments_raw(
+                    subreddit_name, raw["id"], raw.get("permalink", ""), max_comments
                 )
                 added = 0
                 for rc in raw_comments:
@@ -412,7 +433,6 @@ def parse_subreddits(
 
                 if added:
                     logger.debug(f"  └─ {added} comments for '{raw.get('title','')[:55]}'")
-                time.sleep(1)
 
         logger.info(f"r/{subreddit_name}: {sub_matched} posts matched")
 

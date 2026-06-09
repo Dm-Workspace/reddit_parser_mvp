@@ -38,6 +38,9 @@ QA_PASS    = "PASS"
 QA_WARNING = "WARNING"
 QA_FAIL    = "FAIL"
 
+# Minimum user agent check (public_json and playwright modes need this)
+_DEFAULT_UA = "TrendIntelligenceHub/1.0"
+
 
 # ── Result dataclasses ────────────────────────────────────────────────────────
 
@@ -86,20 +89,35 @@ class QAResult:
     errors: List[str]                        = field(default_factory=list)
 
 
-# ── Reddit ENV check ──────────────────────────────────────────────────────────
+# ── Reddit ENV / client check ─────────────────────────────────────────────────
 
 def _check_reddit_env() -> None:
-    missing = []
-    if not os.environ.get("REDDIT_CLIENT_ID"):
-        missing.append("REDDIT_CLIENT_ID")
-    if not os.environ.get("REDDIT_CLIENT_SECRET"):
-        missing.append("REDDIT_CLIENT_SECRET")
-    if missing:
-        raise RuntimeError(
-            f"Reddit API ENV vars not set: {', '.join(missing)}\n"
-            f"Create a script app at https://www.reddit.com/prefs/apps\n"
-            f"Then set these variables in your .env or Railway ENV."
-        )
+    """
+    Verify that the configured REDDIT_ACCESS_MODE can actually work.
+
+    public_json / playwright / auto-without-creds:
+        Only REDDIT_USER_AGENT is required (has a default).
+
+    oauth / auto-with-creds:
+        REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET required.
+    """
+    from reddit_client import get_effective_mode, REDDIT_USER_AGENT, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET
+
+    mode = get_effective_mode()
+
+    if mode == "oauth":
+        missing = []
+        if not REDDIT_CLIENT_ID:
+            missing.append("REDDIT_CLIENT_ID")
+        if not REDDIT_CLIENT_SECRET:
+            missing.append("REDDIT_CLIENT_SECRET")
+        if missing:
+            raise RuntimeError(
+                f"REDDIT_ACCESS_MODE=oauth requires: {', '.join(missing)}\n"
+                f"Either set those credentials OR switch to:\n"
+                f"  REDDIT_ACCESS_MODE=public_json  (no credentials needed)"
+            )
+    # public_json / playwright / auto → user agent defaults, no credentials needed
 
 
 # ── Smoke test ────────────────────────────────────────────────────────────────
