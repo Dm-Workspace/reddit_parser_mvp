@@ -378,6 +378,153 @@ Every run produces `{run_id}_handoff.json` uploaded to Google Drive:
 
 ---
 
+## Parser QA / Smoke Tests
+
+These commands test the **parser core** only — no Telegram, no Railway, no full DB required.  
+Google Drive upload is opt-in with `--upload-drive`.  
+SQLite fallback works locally out of the box.
+
+> **Prerequisite:** `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` must be set.  
+> Without them the command prints a clear error and exits with code 1.
+
+---
+
+### `--parser-smoke-test`
+
+Runs a small live parse against known public subreddits:
+
+```bash
+python main_runner.py --parser-smoke-test
+```
+
+Configuration:
+- **Subreddits:** `Supplements`, `Biohackers`
+- **Keywords:** `magnesium`, `sleep`, `fatigue`
+- **Period:** `last_7d` | **Sort:** `hot` | **Limit:** 10 posts/sub | **Comments:** 5/post
+- **min_score / min_comments:** 0 (collect everything)
+- **Exports:** xlsx + json + handoff_json
+- **Output dir:** `exports/smoke_test/{timestamp}/`
+
+Sample output:
+```
+Running parser smoke test (subreddits: Supplements, Biohackers)...
+
+=======================================================
+  Parser Smoke Test
+=======================================================
+  STATUS           : ok
+  posts_count      : 18
+  comments_count   : 74
+
+  Data quality:
+    bot_comments        : 0
+    empty_title         : 0
+    empty_permalink     : 0
+    empty_selftext      : 4
+    duplicate_posts_rm  : 2
+
+  top_keywords     : magnesium (11), sleep (8), fatigue (6)
+
+  Export dir       : exports/smoke_test/20260609_183000
+  xlsx_path        : exports/smoke_test/20260609_183000/smoke_20260609_183000.xlsx
+  json_path        : exports/smoke_test/20260609_183000/smoke_20260609_183000.json
+  handoff_json     : exports/smoke_test/20260609_183000/smoke_20260609_183000_handoff.json
+=======================================================
+```
+
+---
+
+### `--parser-smoke-test --upload-drive`
+
+Same as above, but also uploads the xlsx to Google Drive:
+
+```bash
+python main_runner.py --parser-smoke-test --upload-drive
+```
+
+Requires `GOOGLE_DRIVE_FOLDER_ID` and `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` to be set.  
+If Drive is not configured, prints `drive_upload_status: skipped (Drive not configured)` and continues.
+
+Additional output:
+```
+  Drive upload     : ok
+  drive_file_id    : 1ABC...XYZ
+  drive_view_link  : https://drive.google.com/file/d/1ABC.../view
+```
+
+---
+
+### `--parser-qa-file <path>`
+
+Validates a finished export Excel file without any network calls:
+
+```bash
+python main_runner.py --parser-qa-file exports/smoke_test/20260609_183000/smoke_20260609_183000.xlsx
+```
+
+**Status rules:**
+
+| Status | Conditions |
+|--------|-----------|
+| **PASS** | All required sheets present, `total_posts > 0`, `total_comments > 0`, `empty_titles = 0`, `empty_permalinks = 0`, `bot_comments = 0` |
+| **WARNING** | PASS criteria met but: `total_posts < 20`, or `total_comments < 100`, or `empty_selftext > 30%`, or `trend_score_zero > 50%` |
+| **FAIL** | Missing required sheets (`Posts`, `Comments`, `Summary`), or `total_posts = 0`, or `total_comments = 0`, or any PASS criterion violated |
+
+Required sheets: **Posts**, **Comments**, **Summary**
+
+Sample output:
+```
+=======================================================
+  Parser QA Report
+=======================================================
+  File             : exports/smoke_test/.../smoke_....xlsx
+  STATUS           : [WARNING]
+
+  Sheets found     : Posts, Comments, Summary, Top Posts
+  total_posts      : 18
+  total_comments   : 74
+
+  Data quality:
+    empty_titles          : 0
+    empty_permalinks      : 0
+    bot_comments_count    : 0
+    duplicated_post_ids   : 0
+    trend_score_zero      : 2
+    empty_selftext        : 4
+
+  Pain signals:
+    no_signal              : 10
+    stress                 : 5
+    fatigue                : 3
+
+  Warnings:
+    - total_posts < 20 (18)
+    - total_comments < 100 (74)
+=======================================================
+```
+
+Exit codes: `0` = PASS or WARNING, `1` = FAIL.
+
+---
+
+### Typical QA workflow
+
+```bash
+# 1. Check DB is ready
+python main_runner.py --db-check
+
+# 2. Run smoke test (verifies full parser + export pipeline)
+python main_runner.py --parser-smoke-test
+
+# 3. QA check the generated Excel
+python main_runner.py --parser-qa-file exports/smoke_test/<timestamp>/smoke_<timestamp>.xlsx
+
+# 4. Optional: also verify Drive upload
+python main_runner.py --parser-smoke-test --upload-drive
+```
+
+---
+
 ## Troubleshooting
 
 ### Bot starts but `/status` shows "database error"

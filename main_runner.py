@@ -271,6 +271,48 @@ def run_single_monitor(monitor_id: str) -> None:
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
+# ── Parser QA / Smoke test commands ──────────────────────────────────────────
+
+def cmd_parser_smoke_test(upload_drive: bool = False) -> None:
+    """
+    Run a small live Reddit parse to verify the parser stack end-to-end.
+    Requires REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET in ENV.
+    No Telegram, no Railway needed.
+    Google Drive upload only when upload_drive=True.
+    """
+    from utils.logger import setup_logger
+    setup_logger("WARNING")   # keep output clean
+    from parser_qa import run_smoke_test, print_smoke_result
+
+    print("Running parser smoke test (subreddits: Supplements, Biohackers)...")
+    try:
+        result = run_smoke_test(upload_drive=upload_drive)
+    except RuntimeError as e:
+        print(f"\n[ERROR] {e}\n")
+        sys.exit(1)
+    print_smoke_result(result)
+    if not result.success:
+        sys.exit(1)
+
+
+def cmd_parser_qa_file(xlsx_path: str) -> None:
+    """
+    Inspect a finished export Excel file and print a QA report.
+    No network calls, no DB writes.
+    """
+    from utils.logger import setup_logger
+    setup_logger("WARNING")
+    from parser_qa import run_qa_file, print_qa_result, QA_FAIL
+
+    print(f"Running QA on: {xlsx_path}")
+    qa = run_qa_file(xlsx_path)
+    print_qa_result(qa)
+    if qa.status == QA_FAIL:
+        sys.exit(1)
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main_runner.py",
@@ -287,6 +329,11 @@ Admin / debug:
   python main_runner.py --list-projects
   python main_runner.py --list-monitors
   python main_runner.py --run-monitor <monitor_id>
+
+Parser QA / smoke tests (no Telegram/Railway required):
+  python main_runner.py --parser-smoke-test
+  python main_runner.py --parser-smoke-test --upload-drive
+  python main_runner.py --parser-qa-file exports/smoke_test/.../smoke_*.xlsx
         """,
     )
     parser.add_argument("--verbose",          action="store_true", help="Debug logging")
@@ -311,6 +358,14 @@ Admin / debug:
     parser.add_argument("--list-monitors",    action="store_true",
                         help="Show all monitors")
 
+    # Parser QA
+    parser.add_argument("--parser-smoke-test", action="store_true",
+                        help="Run live smoke test (Supplements+Biohackers, no DB write)")
+    parser.add_argument("--upload-drive",      action="store_true",
+                        help="With --parser-smoke-test: also upload exports to Drive")
+    parser.add_argument("--parser-qa-file",    metavar="XLSX_PATH",
+                        help="QA check an existing export Excel file")
+
     return parser
 
 
@@ -322,12 +377,13 @@ def main():
         args.run_due_monitors, args.run_queued, args.run_monitor,
         args.db_check, args.init_db,
         args.list_runs, args.list_projects, args.list_monitors,
+        args.parser_smoke_test, args.parser_qa_file,
     ])
     if not any_action:
         parser.print_help()
         sys.exit(0)
 
-    # ── Pure-diagnostic commands (no full _setup) ──────────────────────────────
+    # ── Pure-diagnostic / QA commands (no full _setup needed) ─────────────────
     if args.db_check:
         cmd_db_check()
         return
@@ -346,6 +402,14 @@ def main():
 
     if args.list_monitors:
         cmd_list_monitors()
+        return
+
+    if args.parser_smoke_test:
+        cmd_parser_smoke_test(upload_drive=args.upload_drive)
+        return
+
+    if args.parser_qa_file:
+        cmd_parser_qa_file(args.parser_qa_file)
         return
 
     # ── Runtime modes — need full setup ───────────────────────────────────────
