@@ -1,9 +1,27 @@
+# ── Core scraping ──────────────────────────────────────────────────────────────
 playwright>=1.44.0
+
+# ── Data / Export ─────────────────────────────────────────────────────────────
 pandas>=2.0.0
 openpyxl>=3.1.0
+rapidfuzz>=3.0.0
+
+# ── Config & utilities ────────────────────────────────────────────────────────
 python-dotenv>=1.0.0
 loguru>=0.7.0
-rapidfuzz>=3.0.0
 pyyaml>=6.0.0
-apscheduler>=3.10.0
 pytz>=2024.1
+
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+apscheduler>=3.10.0
+croniter>=1.4.0
+
+# ── Database ──────────────────────────────────────────────────────────────────
+psycopg2-binary>=2.9.0      # Postgres (Railway); safe to install even when using SQLite
+
+# ── Google Drive ──────────────────────────────────────────────────────────────
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+
+# ── Telegram Bot ──────────────────────────────────────────────────────────────
+python-telegram-bot>=20.7

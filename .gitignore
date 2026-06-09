@@ -10,3 +10,6 @@ __pycache__/
 *.pyc
 .idea/
 .vscode/
+*.db
+/tmp/
+service-account*.json

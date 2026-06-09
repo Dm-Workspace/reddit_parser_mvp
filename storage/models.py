@@ -1,10 +1,9 @@
 """
 Dataclass models for DB entities.
-Designed to map 1:1 to SQLite tables.
-Easy to swap for SQLAlchemy/Postgres later.
+Designed to map 1:1 to DB tables (SQLite or Postgres).
 """
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional
 
 
 @dataclass
@@ -31,17 +30,17 @@ class Monitor:
     schedule_cron: str
     timezone: str
     enabled: bool
-    export_formats: str  # JSON-encoded list, e.g. '["xlsx","json"]'
+    export_formats: str          # JSON-encoded list, e.g. '["xlsx","json"]'
     created_at: str = ""
     updated_at: str = ""
 
 
-# Run statuses
-RUN_QUEUED = "queued"
-RUN_RUNNING = "running"
-RUN_COMPLETED = "completed"
+# ── Run statuses ───────────────────────────────────────────────────────────────
+RUN_QUEUED           = "queued"
+RUN_RUNNING          = "running"
+RUN_COMPLETED        = "completed"
 RUN_COMPLETED_WARNING = "completed_with_warning"
-RUN_FAILED = "failed"
+RUN_FAILED           = "failed"
 
 
 @dataclass
@@ -51,18 +50,24 @@ class Run:
     project_id: str
     status: str
     started_at: str
-    finished_at: Optional[str] = None
-    total_posts: int = 0
-    total_comments: int = 0
-    export_path: Optional[str] = None
-    handoff_json_path: Optional[str] = None
-    error_message: Optional[str] = None
+    finished_at: Optional[str]       = None
+    total_posts: int                  = 0
+    total_comments: int               = 0
+    quality_status: str               = "ok"          # ok | small_dataset
+    warning_message: Optional[str]    = None
+    error_message: Optional[str]      = None
+    export_path: Optional[str]        = None
+    handoff_json_path: Optional[str]  = None
+    top_keywords_json: Optional[str]  = None          # JSON list[{keyword,total_mentions}]
 
 
 @dataclass
 class Export:
     id: str
     run_id: str
-    format: str
-    file_path: str
-    created_at: str = ""
+    format: str                       # xlsx | json | handoff_json
+    file_path: str                    # local path (may not exist on cloud)
+    created_at: str                   = ""
+    drive_file_id: Optional[str]      = None
+    drive_web_view_link: Optional[str] = None
+    drive_download_link: Optional[str] = None
