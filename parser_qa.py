@@ -640,11 +640,13 @@ def print_smoke_result(result: SmokeResult) -> None:
     print(f"  {label}")
     print("=" * W)
 
-    if not result.success and result.error and result.posts_count == 0:
-        print(f"  STATUS  : FAIL")
+    if not result.success and result.error:
+        print(f"  STATUS  : {result.status}")
         print(f"  Error   : {result.error}")
-        print("=" * W)
-        return
+        if result.posts_count == 0:
+            print("=" * W)
+            return
+        print()   # continue to show partial results if we have them
 
     print(f"  STATUS           : {result.status}")
     print(f"  posts_count      : {result.posts_count}")

@@ -380,23 +380,31 @@ Every run produces `{run_id}_handoff.json` uploaded to Google Drive:
 
 ## Reddit Access Modes
 
-The parser supports **three Reddit backends** controlled by a single ENV variable.  
+The parser supports **four Reddit backends** controlled by a single ENV variable.  
 **No Reddit API credentials are needed for the default mode.**
 
 ### `REDDIT_ACCESS_MODE` values
 
 | Mode | Description | Credentials needed? |
 |------|-------------|---------------------|
-| `public_json` **(default)** | Requests-based client hitting `reddit.com/r/{sub}.json`. Fast, no OAuth. | ❌ None — just `REDDIT_USER_AGENT` |
-| `playwright` | Headless Chrome scraping of `old.reddit.com` (original v4/v5 behaviour). | ❌ None |
-| `oauth` | PRAW / Reddit OAuth API. Higher rate limits, but requires app registration. | ✅ `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` |
-| `auto` | Uses oauth if credentials are present; otherwise falls back to `public_json`. | ⚙️ Optional |
+| `playwright` **(default)** | Headless Chromium scraping of `old.reddit.com`. Reliable on Railway and local. | ❌ None |
+| `requests_json` | requests-based client hitting `reddit.com/{sub}.json`. Fast but Reddit often returns HTTP 403 for cloud IPs. Use for local debug only. | ❌ None |
+| `oauth` | PRAW / Reddit OAuth API. Higher rate limits, requires app registration. | ✅ `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` |
+| `auto` | Uses oauth if credentials are present; otherwise playwright. | ⚙️ Optional |
 
-**Minimal `.env` to get started (no Reddit registration needed):**
+> **Note:** `public_json` is a backward-compatible alias for `requests_json`.
+
+**Minimal `.env` (no Reddit registration needed):**
 ```env
-REDDIT_ACCESS_MODE=public_json
+REDDIT_ACCESS_MODE=playwright
 REDDIT_USER_AGENT=TrendIntelligenceHub/1.0
 ```
+
+### Why Playwright is the default
+
+Reddit blocks plain `requests` from cloud IPs with HTTP 403.  
+Playwright uses a real headless browser (Chromium), which passes Reddit's bot detection reliably.  
+System Chromium dependencies are already included in `nixpacks.toml` for Railway.
 
 ### Checking Reddit connectivity
 
@@ -404,20 +412,27 @@ REDDIT_USER_AGENT=TrendIntelligenceHub/1.0
 python main_runner.py --reddit-check
 ```
 
-Output example (public_json mode):
+Output example (playwright mode):
 ```
-==================================================
+==============================================================
   Reddit Access Check
-==================================================
-  REDDIT_ACCESS_MODE   : public_json
-  selected_client      : public_json
-  user_agent_set       : YES
-  credentials_set      : NO (not needed for public_json/playwright)
+==============================================================
+  REDDIT_ACCESS_MODE   : playwright
+  selected_client      : playwright
+  user_agent_detected  : YES — TrendIntelligenceHub/1.0
+  credentials_detected : NO (not needed for playwright/requests_json)
+  playwright_available : YES
   test_subreddit       : Supplements
+
+  browser_launch       : ok
+  raw_posts_fetched    : 3
   test_result          : ok
-  posts_sample_count   : 3
-  first_post_title     : Best magnesium form for sleep?
-==================================================
+
+  sample_titles (3):
+    1. Best magnesium glycinate dosage for sleep?
+    2. Ashwagandha — 6 week update
+    3. Anyone tried NMN stacking with resveratrol?
+==============================================================
 ```
 
 ---
@@ -428,7 +443,7 @@ These commands test the **parser core** only — no Telegram, no Railway, no ful
 Google Drive upload is opt-in with `--upload-drive`.  
 SQLite fallback works locally out of the box.
 
-> **No OAuth credentials needed** in `public_json` or `playwright` mode.  
+> **No OAuth credentials needed** in `playwright` or `requests_json` mode.  
 > Credentials (`REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`) are required only for `REDDIT_ACCESS_MODE=oauth`.
 
 ---

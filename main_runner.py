@@ -275,9 +275,10 @@ def run_single_monitor(monitor_id: str) -> None:
 
 def cmd_reddit_check() -> None:
     """
-    Quick connectivity check for the configured Reddit backend.
-    Shows raw HTTP status, children_count, sample titles.
-    In public_json mode: no OAuth credentials needed.
+    Connectivity check for the configured Reddit backend.
+    playwright mode: launches browser, fetches 3 posts from r/Supplements.
+    requests_json mode: HTTP GET to .json endpoint, shows status code.
+    oauth mode: PRAW connectivity (no raw HTTP info).
     """
     from utils.logger import setup_logger
     setup_logger("WARNING")
@@ -286,65 +287,81 @@ def cmd_reddit_check() -> None:
         create_reddit_client, close_reddit_client,
         REDDIT_ACCESS_MODE, REDDIT_USER_AGENT,
         REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET,
-        get_effective_mode,
+        get_effective_mode, _playwright_available,
     )
 
     effective = get_effective_mode()
     ua_set    = bool(REDDIT_USER_AGENT)
     creds_set = bool(REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET)
+    pw_pkg    = _playwright_available()
 
     print()
-    print("=" * 60)
+    print("=" * 62)
     print("  Reddit Access Check")
-    print("=" * 60)
+    print("=" * 62)
     print(f"  REDDIT_ACCESS_MODE   : {REDDIT_ACCESS_MODE}")
     print(f"  selected_client      : {effective}")
-    print(f"  user_agent_detected  : {'YES — ' + REDDIT_USER_AGENT if ua_set else 'NO'}")
-    print(f"  credentials_detected : {'YES' if creds_set else 'NO (not needed for public_json/playwright)'}")
+    print(f"  user_agent_detected  : {'YES — ' + REDDIT_USER_AGENT if ua_set else 'NO (using default)'}")
+    print(f"  credentials_detected : {'YES' if creds_set else 'NO (not needed for playwright/requests_json)'}")
+    print(f"  playwright_available : {'YES' if pw_pkg else 'NO — run: pip install playwright && playwright install chromium'}")
+    print(f"  test_subreddit       : Supplements")
     print()
+
+    if effective == "playwright" and not pw_pkg:
+        print("  browser_launch       : FAIL — playwright package not installed")
+        print("  test_result          : FAIL")
+        print("=" * 62)
+        sys.exit(1)
 
     client = None
     try:
+        if effective == "playwright":
+            print("  browser_launch       : launching...")
+
         client = create_reddit_client()
-        # Use test_connection() for detailed HTTP diagnostics
-        info = client.test_connection("Supplements")
+        info   = client.test_connection("Supplements")
 
-        test_url = info.get("test_url", "n/a")
-        http_status = info.get("http_status")
-        children_count = info.get("children_count", 0)
-        sample_titles = info.get("sample_titles", [])
-        err = info.get("error")
+        pw_ok      = info.get("playwright_available", False)
+        bl_status  = info.get("browser_launch", "n/a")
+        http_st    = info.get("http_status")
+        count      = info.get("children_count", 0)
+        titles     = info.get("sample_titles", [])
+        err        = info.get("error")
 
-        print(f"  test_url             : {test_url}")
-        print(f"  http_status          : {http_status if http_status is not None else 'n/a'}")
-        print(f"  raw_children_count   : {children_count if children_count is not None else 'n/a'}")
+        if effective == "playwright":
+            print(f"  browser_launch       : {bl_status}")
+        else:
+            print(f"  test_url             : {info.get('test_url', 'n/a')}")
+            print(f"  http_status          : {http_st if http_st is not None else 'n/a'}")
 
-        if err and http_status != 200:
+        print(f"  raw_posts_fetched    : {count if count is not None else 'n/a'}")
+
+        if err:
             print(f"  test_result          : FAIL")
             print(f"  error                : {err}")
-            print()
-            print("  Possible causes:")
-            print("    - Reddit blocking requests from this IP/environment")
-            print("    - REDDIT_USER_AGENT not set or blocked")
-            print("    - Network connectivity issue")
-            if http_status == 403:
-                print("    - HTTP 403: Reddit is blocking this IP.")
-                print("      On Railway/cloud: this is normal for new IPs.")
-                print("      On local machine: check REDDIT_USER_AGENT.")
+            if effective == "requests_json" and http_st in (403, 429):
+                print()
+                print(f"  Hint: HTTP {http_st} — Reddit is blocking this IP/User-Agent.")
+                print(f"        Switch to REDDIT_ACCESS_MODE=playwright for reliable access.")
+            elif effective == "playwright":
+                print()
+                print(f"  Hint: Browser opened but no posts extracted.")
+                print(f"        Reddit may have changed old.reddit.com layout.")
             sys.exit(1)
-        else:
-            print(f"  test_result          : ok")
 
-        if sample_titles:
+        print(f"  test_result          : ok")
+
+        if titles:
             print()
-            print(f"  sample_titles ({len(sample_titles)}):")
-            for i, t in enumerate(sample_titles[:3], 1):
+            print(f"  sample_titles ({len(titles)}):")
+            for i, t in enumerate(titles[:3], 1):
                 print(f"    {i}. {t}")
 
     except Exception as e:
-        print(f"  test_result          : error")
+        print(f"  browser_launch       : error" if effective == "playwright" else "")
+        print(f"  test_result          : FAIL")
         print(f"  error_message        : {e}")
-        print("=" * 60)
+        print("=" * 62)
         sys.exit(1)
     finally:
         if client:
@@ -353,7 +370,7 @@ def cmd_reddit_check() -> None:
             except Exception:
                 pass
 
-    print("=" * 60)
+    print("=" * 62)
     print()
 
 

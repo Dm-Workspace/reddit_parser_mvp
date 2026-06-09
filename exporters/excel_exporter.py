@@ -81,7 +81,9 @@ def _build_quality_rows(
     no_kw_c = sum(1 for c in comments if c.comment_match_type == "no_match")
     avg_cmt = round(sum(p.num_comments for p in posts) / total_p, 1) if total_p else 0
     avg_ps = round(sum(p.score for p in posts) / total_p, 1) if total_p else 0
-    avg_cs = round(sum(c.score for c in comments) / total_c, 1) if total_c else 0
+    # c.score may be None when Reddit hides vote counts
+    _c_scores = [c.score for c in comments if c.score is not None]
+    avg_cs = round(sum(_c_scores) / len(_c_scores), 1) if _c_scores else 0
 
     posts_per_sub = Counter(p.subreddit for p in posts)
     comments_per_sub = Counter(c.subreddit for c in comments)
