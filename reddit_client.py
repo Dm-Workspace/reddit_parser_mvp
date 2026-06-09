@@ -244,6 +244,46 @@ class PublicJsonClient:
                     post_id, subreddit, out, max_cnt, depth + 1,
                 )
 
+    def test_connection(self, subreddit: str = "Supplements") -> dict:
+        """
+        Make a real HTTP request and return diagnostic info.
+        Returns: {test_url, http_status, children_count, sample_titles, error}
+        """
+        import requests
+        url = f"{BASE_URL}/r/{subreddit}/hot.json"
+        params = {"limit": 5, "raw_json": 1}
+        try:
+            r = self._session.get(url, params=params, timeout=20)
+            http_status = r.status_code
+            if r.status_code == 200:
+                data = r.json()
+                children = data.get("data", {}).get("children", [])
+                titles = [c["data"].get("title", "")[:70]
+                          for c in children if c.get("data")]
+                return {
+                    "test_url":       url,
+                    "http_status":    http_status,
+                    "children_count": len(children),
+                    "sample_titles":  titles,
+                    "error":          None,
+                }
+            else:
+                return {
+                    "test_url":       url,
+                    "http_status":    http_status,
+                    "children_count": 0,
+                    "sample_titles":  [],
+                    "error":          f"HTTP {http_status}",
+                }
+        except Exception as e:
+            return {
+                "test_url":       url,
+                "http_status":    None,
+                "children_count": 0,
+                "sample_titles":  [],
+                "error":          str(e),
+            }
+
     def close(self) -> None:
         try:
             self._session.close()
@@ -296,6 +336,16 @@ class PlaywrightClient:
                          post_permalink: str, max_comments: int) -> List[dict]:
         from reddit_parser import _get_comments_raw
         return _get_comments_raw(self._ctx, subreddit, post_id, post_permalink, max_comments)
+
+    def test_connection(self, subreddit: str = "Supplements") -> dict:
+        """Playwright doesn't expose raw HTTP; return a not-supported stub."""
+        return {
+            "test_url":       f"https://old.reddit.com/r/{subreddit}/hot",
+            "http_status":    None,
+            "children_count": None,
+            "sample_titles":  [],
+            "error":          "http_check_not_supported_for_playwright",
+        }
 
     def close(self) -> None:
         try:
@@ -401,6 +451,16 @@ class PrawClient:
         except Exception as e:
             logger.warning(f"[PRAW] comments for {post_id}: {e}")
             return []
+
+    def test_connection(self, subreddit: str = "Supplements") -> dict:
+        """PRAW doesn't give raw HTTP info; return a not-supported stub."""
+        return {
+            "test_url":       f"https://oauth.reddit.com/r/{subreddit}/hot",
+            "http_status":    None,
+            "children_count": None,
+            "sample_titles":  [],
+            "error":          "http_check_not_supported_for_praw",
+        }
 
     def close(self) -> None:
         pass

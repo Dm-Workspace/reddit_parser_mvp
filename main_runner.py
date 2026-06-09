@@ -276,7 +276,7 @@ def run_single_monitor(monitor_id: str) -> None:
 def cmd_reddit_check() -> None:
     """
     Quick connectivity check for the configured Reddit backend.
-    Fetches up to 3 posts from r/Supplements to verify the client works.
+    Shows raw HTTP status, children_count, sample titles.
     In public_json mode: no OAuth credentials needed.
     """
     from utils.logger import setup_logger
@@ -294,28 +294,57 @@ def cmd_reddit_check() -> None:
     creds_set = bool(REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET)
 
     print()
-    print("=" * 50)
+    print("=" * 60)
     print("  Reddit Access Check")
-    print("=" * 50)
+    print("=" * 60)
     print(f"  REDDIT_ACCESS_MODE   : {REDDIT_ACCESS_MODE}")
     print(f"  selected_client      : {effective}")
-    print(f"  user_agent_set       : {'YES' if ua_set else 'NO'}")
-    print(f"  credentials_set      : {'YES' if creds_set else 'NO (not needed for public_json/playwright)'}")
-    print(f"  test_subreddit       : Supplements")
+    print(f"  user_agent_detected  : {'YES — ' + REDDIT_USER_AGENT if ua_set else 'NO'}")
+    print(f"  credentials_detected : {'YES' if creds_set else 'NO (not needed for public_json/playwright)'}")
+    print()
 
     client = None
     try:
         client = create_reddit_client()
-        posts  = client.get_posts_raw("Supplements", "hot", 3)
-        if posts:
-            print(f"  test_result          : ok")
-            print(f"  posts_sample_count   : {len(posts)}")
-            print(f"  first_post_title     : {(posts[0].get('title',''))[:60]}")
+        # Use test_connection() for detailed HTTP diagnostics
+        info = client.test_connection("Supplements")
+
+        test_url = info.get("test_url", "n/a")
+        http_status = info.get("http_status")
+        children_count = info.get("children_count", 0)
+        sample_titles = info.get("sample_titles", [])
+        err = info.get("error")
+
+        print(f"  test_url             : {test_url}")
+        print(f"  http_status          : {http_status if http_status is not None else 'n/a'}")
+        print(f"  raw_children_count   : {children_count if children_count is not None else 'n/a'}")
+
+        if err and http_status != 200:
+            print(f"  test_result          : FAIL")
+            print(f"  error                : {err}")
+            print()
+            print("  Possible causes:")
+            print("    - Reddit blocking requests from this IP/environment")
+            print("    - REDDIT_USER_AGENT not set or blocked")
+            print("    - Network connectivity issue")
+            if http_status == 403:
+                print("    - HTTP 403: Reddit is blocking this IP.")
+                print("      On Railway/cloud: this is normal for new IPs.")
+                print("      On local machine: check REDDIT_USER_AGENT.")
+            sys.exit(1)
         else:
-            print(f"  test_result          : warning — 0 posts returned")
+            print(f"  test_result          : ok")
+
+        if sample_titles:
+            print()
+            print(f"  sample_titles ({len(sample_titles)}):")
+            for i, t in enumerate(sample_titles[:3], 1):
+                print(f"    {i}. {t}")
+
     except Exception as e:
         print(f"  test_result          : error")
         print(f"  error_message        : {e}")
+        print("=" * 60)
         sys.exit(1)
     finally:
         if client:
@@ -324,29 +353,49 @@ def cmd_reddit_check() -> None:
             except Exception:
                 pass
 
-    print("=" * 50)
+    print("=" * 60)
     print()
 
 
 def cmd_parser_smoke_test(upload_drive: bool = False) -> None:
     """
-    Run a small live Reddit parse to verify the parser stack end-to-end.
-    Requires REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET in ENV.
-    No Telegram, no Railway needed.
-    Google Drive upload only when upload_drive=True.
+    Run a live Reddit parse WITHOUT keyword filter.
+    Goal: confirm the client fetches real posts and comments.
+    0 posts → FAIL. Does not require REDDIT_CLIENT_ID/SECRET.
     """
     from utils.logger import setup_logger
-    setup_logger("WARNING")   # keep output clean
+    setup_logger("WARNING")
     from parser_qa import run_smoke_test, print_smoke_result
 
-    print("Running parser smoke test (subreddits: Supplements, Biohackers)...")
+    print("Running parser smoke test (subreddits: Supplements, Biohackers, keywords: none)...")
     try:
         result = run_smoke_test(upload_drive=upload_drive)
     except RuntimeError as e:
         print(f"\n[ERROR] {e}\n")
         sys.exit(1)
     print_smoke_result(result)
-    if not result.success:
+    if result.status == "FAIL":
+        sys.exit(1)
+
+
+def cmd_parser_keyword_test() -> None:
+    """
+    Run a wider Reddit parse WITH keyword filter (magnesium/sleep/fatigue).
+    Uses limit=50 per subreddit. 0 raw posts → FAIL. 0 matches → WARNING.
+    Does not require REDDIT_CLIENT_ID/SECRET in public_json mode.
+    """
+    from utils.logger import setup_logger
+    setup_logger("WARNING")
+    from parser_qa import run_keyword_test, print_smoke_result
+
+    print("Running keyword test (subreddits: Supplements, Biohackers, keywords: magnesium/sleep/fatigue)...")
+    try:
+        result = run_keyword_test()
+    except RuntimeError as e:
+        print(f"\n[ERROR] {e}\n")
+        sys.exit(1)
+    print_smoke_result(result)
+    if result.status == "FAIL":
         sys.exit(1)
 
 
@@ -389,6 +438,7 @@ Reddit / Parser QA (no Telegram/Railway required):
   python main_runner.py --reddit-check
   python main_runner.py --parser-smoke-test
   python main_runner.py --parser-smoke-test --upload-drive
+  python main_runner.py --parser-keyword-test
   python main_runner.py --parser-qa-file exports/smoke_test/.../smoke_*.xlsx
         """,
     )
@@ -419,11 +469,13 @@ Reddit / Parser QA (no Telegram/Railway required):
                         help="Test Reddit client connectivity (no OAuth needed in public_json mode)")
 
     # Parser QA
-    parser.add_argument("--parser-smoke-test", action="store_true",
-                        help="Run live smoke test (Supplements+Biohackers, no DB write)")
-    parser.add_argument("--upload-drive",      action="store_true",
+    parser.add_argument("--parser-smoke-test",   action="store_true",
+                        help="Live smoke test — no keyword filter, checks raw collection")
+    parser.add_argument("--upload-drive",        action="store_true",
                         help="With --parser-smoke-test: also upload exports to Drive")
-    parser.add_argument("--parser-qa-file",    metavar="XLSX_PATH",
+    parser.add_argument("--parser-keyword-test", action="store_true",
+                        help="Live keyword test (magnesium/sleep/fatigue, limit=50)")
+    parser.add_argument("--parser-qa-file",      metavar="XLSX_PATH",
                         help="QA check an existing export Excel file")
 
     return parser
@@ -437,7 +489,8 @@ def main():
         args.run_due_monitors, args.run_queued, args.run_monitor,
         args.db_check, args.init_db,
         args.list_runs, args.list_projects, args.list_monitors,
-        args.reddit_check, args.parser_smoke_test, args.parser_qa_file,
+        args.reddit_check, args.parser_smoke_test,
+        args.parser_keyword_test, args.parser_qa_file,
     ])
     if not any_action:
         parser.print_help()
@@ -470,6 +523,10 @@ def main():
 
     if args.parser_smoke_test:
         cmd_parser_smoke_test(upload_drive=args.upload_drive)
+        return
+
+    if args.parser_keyword_test:
+        cmd_parser_keyword_test()
         return
 
     if args.parser_qa_file:

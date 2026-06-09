@@ -360,6 +360,7 @@ def parse_subreddits(
     filter_bots: bool = True,
     language_mode: str = "mixed",
     min_comment_length: int = 40,
+    _debug: Optional[dict] = None,   # populated with counters when provided
 ) -> tuple[List[RedditPost], List[RedditComment]]:
     # Backward compat: old code passed {"context": pw_context}
     if isinstance(reddit, dict) and "context" in reddit:
@@ -381,16 +382,27 @@ def parse_subreddits(
     all_comments: List[RedditComment] = []
     cutoff = get_cutoff_timestamp(period)
 
+    # Initialise debug counters if caller wants them
+    if _debug is not None:
+        for key in ("raw_posts_fetched", "after_filter", "final_posts", "comments_fetched"):
+            _debug.setdefault(key, 0)
+
     for subreddit_name in subreddits:
         logger.info(f"Fetching r/{subreddit_name} [{sort}, limit={limit}]")
         raw_posts = _client.get_posts_raw(subreddit_name, sort, limit, period)
         logger.info(f"r/{subreddit_name}: got {len(raw_posts)} raw posts")
+
+        if _debug is not None:
+            _debug["raw_posts_fetched"] += len(raw_posts)
 
         sub_matched = 0
         for raw in raw_posts:
             ok, matched_kws = post_matches_data(raw, keywords, cutoff, min_score, min_comments)
             if not ok:
                 continue
+
+            if _debug is not None:
+                _debug["after_filter"] += 1
 
             # Fetch selftext only if it's a self-post and selftext is empty
             if (fetch_selftext and raw.get("is_self")
@@ -412,10 +424,16 @@ def parse_subreddits(
             sub_matched += 1
             post_has_keywords = bool(matched_kws)
 
+            if _debug is not None:
+                _debug["final_posts"] += 1
+
             if max_comments > 0:
                 raw_comments = _client.get_comments_raw(
                     subreddit_name, raw["id"], raw.get("permalink", ""), max_comments
                 )
+                if _debug is not None:
+                    _debug["comments_fetched"] += len(raw_comments)
+
                 added = 0
                 for rc in raw_comments:
                     if filter_bots and is_bot_comment(rc.get("author", ""), rc.get("body", "")):
