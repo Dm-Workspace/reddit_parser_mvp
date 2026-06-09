@@ -1,25 +1,38 @@
 #!/usr/bin/env python3
 """
-Railway Cron Runner — technical scheduler only.
+Railway Cron Runner — technical scheduler + admin CLI.
 
-Usage:
-  python main_runner.py --run-due-monitors    # run monitors with next_run_at <= NOW()
-  python main_runner.py --run-queued          # execute bot-queued runs
-  python main_runner.py --run-monitor <id>    # force-run specific monitor
+Runtime modes (Railway cron):
+  --run-due-monitors   Run monitors where schedule_mode=scheduled AND next_run_at<=NOW
+  --run-queued         Execute runs queued by Telegram bot (status=queued)
 
-Railway cron (railway.json): runs every 30 minutes.
-Only monitors with schedule_mode=scheduled are touched automatically.
-All new monitors default to schedule_mode=manual — not touched by cron.
+Single-monitor mode:
+  --run-monitor <id>   Force-run a specific monitor by ID
+
+Admin / debug commands (run locally or on Railway shell):
+  --db-check           Show DB connection status and table counts
+  --init-db            Create tables + seed system presets (idempotent)
+  --list-runs          Show last 10 runs
+  --list-projects      Show all projects (active + archived)
+  --list-monitors      Show all monitors (active + archived)
+
+Railway cron schedule (recommended):  0 */6 * * *  (every 6 hours)
+
+IMPORTANT — cron policy:
+  - Only monitors with schedule_mode=scheduled are touched
+  - All new monitors default to schedule_mode=manual — cron never touches them
+  - Scheduled monitors run only when next_run_at <= NOW
 """
 import argparse
+import os
 import sys
 
 from loguru import logger
 
 
-def _setup():
+def _setup(verbose: bool = False) -> None:
     from utils.logger import setup_logger
-    setup_logger("INFO")
+    setup_logger("DEBUG" if verbose else "INFO")
     from storage import database as db
     db.init_db()
     from config_loader import seed_system_presets, sync_monitors_yaml
@@ -27,17 +40,143 @@ def _setup():
     sync_monitors_yaml()
 
 
-# ── Due monitors ───────────────────────────────────────────────────────────────
+# ── Admin / debug commands ────────────────────────────────────────────────────
+
+def cmd_db_check() -> None:
+    """Print DB connection status and table counts."""
+    from utils.logger import setup_logger
+    setup_logger("WARNING")   # suppress noise for clean output
+    from storage import database as db
+
+    info = db.get_db_info()
+    print()
+    print("=" * 50)
+    print("  DB Health Check")
+    print("=" * 50)
+
+    url_set = info["db_url_set"]
+    db_type = info["db_type"]
+    print(f"  DATABASE_URL set : {'YES' if url_set else 'NO (SQLite fallback)'}")
+    print(f"  Database type    : {db_type}")
+
+    if info["connected"]:
+        print(f"  Connection       : OK")
+        print()
+        print("  Table counts:")
+        for tbl, cnt in info["counts"].items():
+            print(f"    {tbl:<25} {cnt}")
+    else:
+        print(f"  Connection       : ERROR")
+        print(f"  Error            : {info['error']}")
+
+    print("=" * 50)
+    print()
+    if not info["connected"]:
+        sys.exit(1)
+
+
+def cmd_init_db() -> None:
+    """Create tables and seed system presets. Idempotent — safe to run multiple times."""
+    from utils.logger import setup_logger
+    setup_logger("INFO")
+    from storage import database as db
+    from config_loader import seed_system_presets, sync_monitors_yaml
+
+    print("Initialising database...")
+    db.init_db()
+    print("  [ok] Tables created / verified")
+
+    seed_system_presets()
+    print("  [ok] System presets seeded")
+
+    sync_monitors_yaml()
+    print("  [ok] monitors.yaml synced (if exists)")
+
+    info = db.get_db_info()
+    print(f"\nDB type: {info['db_type']}")
+    for tbl, cnt in info["counts"].items():
+        print(f"  {tbl:<25} {cnt} rows")
+    print("\nDone.")
+
+
+def cmd_list_runs(limit: int = 10) -> None:
+    from utils.logger import setup_logger
+    setup_logger("WARNING")
+    from storage import database as db
+    db.init_db()
+
+    runs = db.list_runs(limit=limit)
+    if not runs:
+        print("No runs found.")
+        return
+
+    print()
+    header = f"{'run_id':<14} {'project_id':<20} {'monitor_id':<22} {'status':<22} {'posts':>6} {'comments':>9} {'started_at'}"
+    print(header)
+    print("-" * len(header))
+    for r in runs:
+        print(
+            f"{r.id:<14} {r.project_id:<20} {r.monitor_id:<22} "
+            f"{r.status:<22} {r.total_posts:>6} {r.total_comments:>9} "
+            f"{(r.started_at or '')[:16]}"
+        )
+    print()
+
+
+def cmd_list_projects() -> None:
+    from utils.logger import setup_logger
+    setup_logger("WARNING")
+    from storage import database as db
+    db.init_db()
+
+    projects = db.list_projects(include_archived=True)
+    if not projects:
+        print("No projects found.")
+        return
+
+    print()
+    header = f"{'id':<30} {'name':<25} {'owner':<12} {'lang':<5} {'archived'}"
+    print(header)
+    print("-" * len(header))
+    for p in projects:
+        arch = "ARCHIVED" if p.archived else "active"
+        print(f"{p.id:<30} {p.name:<25} {p.owner_telegram_id:<12} {p.output_language:<5} {arch}")
+    print()
+
+
+def cmd_list_monitors() -> None:
+    from utils.logger import setup_logger
+    setup_logger("WARNING")
+    from storage import database as db
+    db.init_db()
+
+    monitors = db.list_monitors(include_archived=True)
+    if not monitors:
+        print("No monitors found.")
+        return
+
+    print()
+    header = f"{'id':<28} {'project_id':<20} {'schedule_mode':<12} {'frequency':<10} {'archived'}"
+    print(header)
+    print("-" * len(header))
+    for m in monitors:
+        arch = "ARCHIVED" if m.archived else "active"
+        print(f"{m.id:<28} {m.project_id:<20} {m.schedule_mode:<12} {m.frequency:<10} {arch}")
+    print()
+
+
+# ── Due monitors (Railway cron) ───────────────────────────────────────────────
 
 def run_due_monitors() -> None:
     """
     Run all monitors WHERE schedule_mode='scheduled' AND next_run_at <= NOW().
     Skips monitors that already have an active run.
+    Does NOT touch manual monitors.
     """
     from storage import database as db
     from monitor_runner import run_monitor
 
-    due = db.get_due_monitors()  # checks schedule_mode=scheduled AND next_run_at <= NOW
+    due = db.get_due_monitors()
     if not due:
         logger.info("No due monitors.")
         return
@@ -48,15 +187,29 @@ def run_due_monitors() -> None:
         if not monitor.enabled or monitor.archived:
             logger.debug(f"[skip] {monitor.id} — disabled/archived")
             continue
+
+        # Respect min_days_between_runs even for scheduled mode
+        from bot.schedule_utils import days_since_run
+        days = days_since_run(monitor.last_run_at)
+        if days is not None and days < monitor.min_days_between_runs:
+            logger.warning(
+                f"[skip] {monitor.id} — ran {days}d ago, min={monitor.min_days_between_runs}d"
+            )
+            continue
+
         active = db.get_active_run_for_monitor(monitor.id)
         if active:
             logger.warning(f"[skip] {monitor.id} — already running ({active.id})")
             continue
-        logger.info(f"[due]  {monitor.id} ({monitor.name}) — starting")
+
+        logger.info(f"[due]  {monitor.id} ({monitor.name})")
         try:
             run = run_monitor(monitor.id)
             if run:
-                logger.success(f"  ✓ {monitor.id} → {run.status} ({run.total_posts}p/{run.total_comments}c)")
+                logger.success(
+                    f"  ✓ {monitor.id} → {run.status} "
+                    f"({run.total_posts}p/{run.total_comments}c)"
+                )
                 ran += 1
             else:
                 logger.error(f"  ✗ {monitor.id} → run returned None")
@@ -95,7 +248,7 @@ def run_queued() -> None:
         if active and active.id != run.id:
             logger.warning(f"[skip queued] run {run.id}: monitor already running ({active.id})")
             continue
-        logger.info(f"[queued] Executing run {run.id} for monitor {run.monitor_id}")
+        logger.info(f"[queued] {run.id} → monitor {run.monitor_id}")
         try:
             result = run_monitor(run.monitor_id, existing_run_id=run.id)
             if result:
@@ -118,18 +271,46 @@ def run_single_monitor(monitor_id: str) -> None:
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main_runner.py",
-        description="Reddit Parser — Railway Cron Runner",
+        description="Reddit Parser — Railway Cron Runner + Admin CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Railway cron mode (run every 6h):
+  python main_runner.py --run-due-monitors --run-queued
+
+Admin / debug:
+  python main_runner.py --db-check
+  python main_runner.py --init-db
+  python main_runner.py --list-runs
+  python main_runner.py --list-projects
+  python main_runner.py --list-monitors
+  python main_runner.py --run-monitor <monitor_id>
+        """,
     )
-    parser.add_argument("--verbose",          action="store_true")
+    parser.add_argument("--verbose",          action="store_true", help="Debug logging")
+
+    # Cron runtime
     parser.add_argument("--run-due-monitors", action="store_true",
-                        help="Run monitors with schedule_mode=scheduled and next_run_at <= NOW")
+                        help="Run scheduled monitors whose next_run_at <= NOW")
     parser.add_argument("--run-queued",       action="store_true",
                         help="Execute bot-queued runs (status=queued)")
     parser.add_argument("--run-monitor",      metavar="MONITOR_ID",
-                        help="Force-run a specific monitor by ID")
+                        help="Force-run a specific monitor")
+
+    # Admin / debug
+    parser.add_argument("--db-check",         action="store_true",
+                        help="Check DB connection and table counts")
+    parser.add_argument("--init-db",          action="store_true",
+                        help="Create tables and seed system presets")
+    parser.add_argument("--list-runs",        action="store_true",
+                        help="Show last 10 runs")
+    parser.add_argument("--list-projects",    action="store_true",
+                        help="Show all projects")
+    parser.add_argument("--list-monitors",    action="store_true",
+                        help="Show all monitors")
+
     return parser
 
 
@@ -137,13 +318,40 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    if not (args.run_due_monitors or args.run_queued or args.run_monitor):
+    any_action = any([
+        args.run_due_monitors, args.run_queued, args.run_monitor,
+        args.db_check, args.init_db,
+        args.list_runs, args.list_projects, args.list_monitors,
+    ])
+    if not any_action:
         parser.print_help()
         sys.exit(0)
 
-    _setup()
+    # ── Pure-diagnostic commands (no full _setup) ──────────────────────────────
+    if args.db_check:
+        cmd_db_check()
+        return
 
-    # Queued runs first (highest priority — user-initiated via bot)
+    if args.init_db:
+        cmd_init_db()
+        return
+
+    if args.list_runs:
+        cmd_list_runs()
+        return
+
+    if args.list_projects:
+        cmd_list_projects()
+        return
+
+    if args.list_monitors:
+        cmd_list_monitors()
+        return
+
+    # ── Runtime modes — need full setup ───────────────────────────────────────
+    _setup(verbose=args.verbose)
+
+    # Queued runs first (user-initiated — highest priority)
     if args.run_queued or args.run_due_monitors:
         run_queued()
 

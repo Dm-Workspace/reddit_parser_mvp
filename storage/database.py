@@ -1,12 +1,17 @@
 """
 Dual-backend storage: Postgres (DATABASE_URL) or SQLite fallback.
 All SQL uses ? placeholders — auto-replaced with %s for Postgres.
+
+PostgreSQL stores ONLY operational metadata:
+  users, projects, monitors, subreddit_presets, keyword_presets, runs, exports
+
+Full post/comment data and export files live on Google Drive.
 """
 import json
 import os
 import sqlite3
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from loguru import logger
 from storage.models import (
@@ -16,28 +21,57 @@ from storage.models import (
 )
 
 # ── Backend detection ──────────────────────────────────────────────────────────
-_DB_URL    = os.environ.get("DATABASE_URL", "")
-_USE_PG    = _DB_URL.startswith(("postgres://", "postgresql://"))
-_PH        = "%s" if _USE_PG else "?"
+# Re-read DATABASE_URL at call time so Railway env vars are picked up after import.
+
+def _db_url() -> str:
+    return os.environ.get("DATABASE_URL", "")
+
+
+def _use_pg() -> bool:
+    url = _db_url()
+    # Railway uses postgres:// scheme; psycopg2 needs postgresql://
+    return url.startswith(("postgres://", "postgresql://"))
+
+
+def _pg_dsn() -> str:
+    """Normalise Railway's postgres:// to postgresql:// for psycopg2."""
+    url = _db_url()
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    return url
+
+
 _SQLITE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "tracker.db")
 
 
 def _get_conn():
-    if _USE_PG:
-        import psycopg2, psycopg2.extras
-        conn = psycopg2.connect(_DB_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    if _use_pg():
+        try:
+            import psycopg2
+            import psycopg2.extras
+        except ImportError:
+            raise RuntimeError(
+                "psycopg2-binary not installed. Run: pip install psycopg2-binary"
+            )
+        conn = psycopg2.connect(_pg_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
         conn.autocommit = False
         return conn
     os.makedirs(os.path.dirname(_SQLITE_PATH), exist_ok=True)
     conn = sqlite3.connect(_SQLITE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
+def _ph() -> str:
+    """Placeholder: %s for Postgres, ? for SQLite."""
+    return "%s" if _use_pg() else "?"
+
+
 def _exec(conn, sql: str, params: tuple = ()):
-    sql = sql.replace("?", _PH)
-    if _USE_PG:
+    sql = sql.replace("?", _ph())
+    if _use_pg():
         cur = conn.cursor()
         cur.execute(sql, params)
         return cur
@@ -46,7 +80,8 @@ def _exec(conn, sql: str, params: tuple = ()):
 
 def _rows(conn, sql: str, params: tuple = ()) -> List[dict]:
     cur = _exec(conn, sql, params)
-    return [dict(r) for r in (cur.fetchall() or [])]
+    rows = cur.fetchall() or []
+    return [dict(r) for r in rows]
 
 
 def _one(conn, sql: str, params: tuple = ()) -> Optional[dict]:
@@ -64,113 +99,123 @@ def _now() -> str:
 
 # ── Schema ─────────────────────────────────────────────────────────────────────
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    telegram_id  BIGINT PRIMARY KEY,
-    username     TEXT DEFAULT '',
-    first_name   TEXT DEFAULT '',
-    role         TEXT DEFAULT 'user',
-    created_at   TEXT,
-    updated_at   TEXT
-);
+_SCHEMA_STMTS = [
+    """CREATE TABLE IF NOT EXISTS users (
+        telegram_id  BIGINT PRIMARY KEY,
+        username     TEXT DEFAULT '',
+        first_name   TEXT DEFAULT '',
+        role         TEXT DEFAULT 'user',
+        created_at   TEXT,
+        updated_at   TEXT
+    )""",
 
-CREATE TABLE IF NOT EXISTS projects (
-    id                     TEXT PRIMARY KEY,
-    owner_telegram_id      BIGINT DEFAULT 0,
-    name                   TEXT NOT NULL,
-    description            TEXT DEFAULT '',
-    niche                  TEXT DEFAULT '',
-    target_market          TEXT DEFAULT '',
-    output_language        TEXT DEFAULT 'en',
-    enabled                INTEGER DEFAULT 1,
-    archived               INTEGER DEFAULT 0,
-    created_at             TEXT,
-    updated_at             TEXT
-);
+    """CREATE TABLE IF NOT EXISTS projects (
+        id                TEXT PRIMARY KEY,
+        owner_telegram_id BIGINT DEFAULT 0,
+        name              TEXT NOT NULL,
+        description       TEXT DEFAULT '',
+        niche             TEXT DEFAULT '',
+        target_market     TEXT DEFAULT '',
+        output_language   TEXT DEFAULT 'en',
+        enabled           INTEGER DEFAULT 1,
+        archived          INTEGER DEFAULT 0,
+        created_at        TEXT,
+        updated_at        TEXT
+    )""",
 
-CREATE TABLE IF NOT EXISTS monitors (
-    id                          TEXT PRIMARY KEY,
-    project_id                  TEXT NOT NULL,
-    owner_telegram_id           BIGINT DEFAULT 0,
-    name                        TEXT NOT NULL,
-    description                 TEXT DEFAULT '',
-    source                      TEXT DEFAULT 'reddit',
-    subreddit_preset_id         TEXT,
-    keyword_preset_id           TEXT,
-    custom_subreddits           TEXT DEFAULT '[]',
-    custom_keywords             TEXT DEFAULT '[]',
-    run_mode                    TEXT DEFAULT 'hot_last_7d',
-    schedule_mode               TEXT DEFAULT 'manual',
-    frequency                   TEXT DEFAULT 'none',
-    schedule_cron               TEXT DEFAULT '',
-    next_run_at                 TEXT,
-    timezone                    TEXT DEFAULT 'UTC',
-    last_run_at                 TEXT,
-    min_days_between_runs       INTEGER DEFAULT 7,
-    max_runs_per_month          INTEGER DEFAULT 4,
-    require_manual_confirmation INTEGER DEFAULT 1,
-    enabled                     INTEGER DEFAULT 1,
-    archived                    INTEGER DEFAULT 0,
-    export_formats              TEXT DEFAULT '["xlsx","json"]',
-    created_at                  TEXT,
-    updated_at                  TEXT
-);
+    """CREATE TABLE IF NOT EXISTS monitors (
+        id                          TEXT PRIMARY KEY,
+        project_id                  TEXT NOT NULL,
+        owner_telegram_id           BIGINT DEFAULT 0,
+        name                        TEXT NOT NULL,
+        description                 TEXT DEFAULT '',
+        source                      TEXT DEFAULT 'reddit',
+        subreddit_preset_id         TEXT,
+        keyword_preset_id           TEXT,
+        custom_subreddits           TEXT DEFAULT '[]',
+        custom_keywords             TEXT DEFAULT '[]',
+        run_mode                    TEXT DEFAULT 'hot_last_7d',
+        schedule_mode               TEXT DEFAULT 'manual',
+        frequency                   TEXT DEFAULT 'none',
+        schedule_cron               TEXT DEFAULT '',
+        next_run_at                 TEXT,
+        timezone                    TEXT DEFAULT 'UTC',
+        last_run_at                 TEXT,
+        min_days_between_runs       INTEGER DEFAULT 7,
+        max_runs_per_month          INTEGER DEFAULT 4,
+        require_manual_confirmation INTEGER DEFAULT 1,
+        enabled                     INTEGER DEFAULT 1,
+        archived                    INTEGER DEFAULT 0,
+        export_formats              TEXT DEFAULT '["xlsx","json"]',
+        created_at                  TEXT,
+        updated_at                  TEXT
+    )""",
 
-CREATE TABLE IF NOT EXISTS subreddit_presets (
-    id                TEXT PRIMARY KEY,
-    owner_telegram_id BIGINT DEFAULT 0,
-    project_id        TEXT,
-    name              TEXT NOT NULL,
-    description       TEXT DEFAULT '',
-    subreddits        TEXT DEFAULT '[]',
-    is_system         INTEGER DEFAULT 0,
-    created_at        TEXT,
-    updated_at        TEXT
-);
+    """CREATE TABLE IF NOT EXISTS subreddit_presets (
+        id                TEXT PRIMARY KEY,
+        owner_telegram_id BIGINT DEFAULT 0,
+        project_id        TEXT,
+        name              TEXT NOT NULL,
+        description       TEXT DEFAULT '',
+        subreddits        TEXT DEFAULT '[]',
+        is_system         INTEGER DEFAULT 0,
+        created_at        TEXT,
+        updated_at        TEXT
+    )""",
 
-CREATE TABLE IF NOT EXISTS keyword_presets (
-    id                TEXT PRIMARY KEY,
-    owner_telegram_id BIGINT DEFAULT 0,
-    project_id        TEXT,
-    name              TEXT NOT NULL,
-    description       TEXT DEFAULT '',
-    keywords          TEXT DEFAULT '[]',
-    language          TEXT DEFAULT 'en',
-    is_system         INTEGER DEFAULT 0,
-    created_at        TEXT,
-    updated_at        TEXT
-);
+    """CREATE TABLE IF NOT EXISTS keyword_presets (
+        id                TEXT PRIMARY KEY,
+        owner_telegram_id BIGINT DEFAULT 0,
+        project_id        TEXT,
+        name              TEXT NOT NULL,
+        description       TEXT DEFAULT '',
+        keywords          TEXT DEFAULT '[]',
+        language          TEXT DEFAULT 'en',
+        is_system         INTEGER DEFAULT 0,
+        created_at        TEXT,
+        updated_at        TEXT
+    )""",
 
-CREATE TABLE IF NOT EXISTS runs (
-    id                TEXT PRIMARY KEY,
-    monitor_id        TEXT NOT NULL,
-    project_id        TEXT NOT NULL,
-    status            TEXT NOT NULL DEFAULT 'queued',
-    started_at        TEXT,
-    finished_at       TEXT,
-    total_posts       INTEGER DEFAULT 0,
-    total_comments    INTEGER DEFAULT 0,
-    quality_status    TEXT DEFAULT 'ok',
-    warning_message   TEXT,
-    error_message     TEXT,
-    export_path       TEXT,
-    handoff_json_path TEXT,
-    top_keywords_json TEXT
-);
+    """CREATE TABLE IF NOT EXISTS runs (
+        id                TEXT PRIMARY KEY,
+        monitor_id        TEXT NOT NULL,
+        project_id        TEXT NOT NULL,
+        owner_telegram_id BIGINT DEFAULT 0,
+        status            TEXT NOT NULL DEFAULT 'queued',
+        started_at        TEXT,
+        finished_at       TEXT,
+        total_posts       INTEGER DEFAULT 0,
+        total_comments    INTEGER DEFAULT 0,
+        quality_status    TEXT DEFAULT 'ok',
+        warning_message   TEXT,
+        error_message     TEXT,
+        export_path       TEXT,
+        handoff_json_path TEXT,
+        top_keywords_json TEXT,
+        created_at        TEXT,
+        updated_at        TEXT
+    )""",
 
-CREATE TABLE IF NOT EXISTS exports (
-    id                  TEXT PRIMARY KEY,
-    run_id              TEXT NOT NULL,
-    format              TEXT NOT NULL,
-    file_path           TEXT DEFAULT '',
-    drive_file_id       TEXT,
-    drive_web_view_link TEXT,
-    drive_download_link TEXT,
-    created_at          TEXT
-);
-"""
+    """CREATE TABLE IF NOT EXISTS exports (
+        id                  TEXT PRIMARY KEY,
+        run_id              TEXT NOT NULL,
+        owner_telegram_id   BIGINT DEFAULT 0,
+        project_id          TEXT DEFAULT '',
+        monitor_id          TEXT DEFAULT '',
+        format              TEXT NOT NULL,
+        file_name           TEXT DEFAULT '',
+        file_path           TEXT DEFAULT '',
+        file_size           INTEGER,
+        drive_file_id       TEXT,
+        drive_web_view_link TEXT,
+        drive_download_link TEXT,
+        created_at          TEXT
+    )""",
+]
 
+# Idempotent PG migrations (ADD COLUMN IF NOT EXISTS)
 _MIGRATIONS_PG = [
+    # monitors
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS owner_telegram_id BIGINT DEFAULT 0",
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''",
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS subreddit_preset_id TEXT",
@@ -180,25 +225,42 @@ _MIGRATIONS_PG = [
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS schedule_mode TEXT DEFAULT 'manual'",
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS frequency TEXT DEFAULT 'none'",
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS next_run_at TEXT",
+    "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'UTC'",
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS last_run_at TEXT",
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS min_days_between_runs INTEGER DEFAULT 7",
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS max_runs_per_month INTEGER DEFAULT 4",
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS require_manual_confirmation INTEGER DEFAULT 1",
     "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0",
-    "ALTER TABLE projects  ADD COLUMN IF NOT EXISTS owner_telegram_id BIGINT DEFAULT 0",
-    "ALTER TABLE projects  ADD COLUMN IF NOT EXISTS niche TEXT DEFAULT ''",
-    "ALTER TABLE projects  ADD COLUMN IF NOT EXISTS target_market TEXT DEFAULT ''",
-    "ALTER TABLE projects  ADD COLUMN IF NOT EXISTS output_language TEXT DEFAULT 'en'",
-    "ALTER TABLE projects  ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0",
-    "ALTER TABLE projects  ADD COLUMN IF NOT EXISTS updated_at TEXT",
-    "ALTER TABLE runs      ADD COLUMN IF NOT EXISTS quality_status TEXT DEFAULT 'ok'",
-    "ALTER TABLE runs      ADD COLUMN IF NOT EXISTS warning_message TEXT",
-    "ALTER TABLE runs      ADD COLUMN IF NOT EXISTS top_keywords_json TEXT",
-    "ALTER TABLE exports   ADD COLUMN IF NOT EXISTS drive_file_id TEXT",
-    "ALTER TABLE exports   ADD COLUMN IF NOT EXISTS drive_web_view_link TEXT",
-    "ALTER TABLE exports   ADD COLUMN IF NOT EXISTS drive_download_link TEXT",
+    "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS export_formats TEXT DEFAULT '[\"xlsx\",\"json\"]'",
+    "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS created_at TEXT",
+    "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS updated_at TEXT",
+    # projects
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_telegram_id BIGINT DEFAULT 0",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS niche TEXT DEFAULT ''",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS target_market TEXT DEFAULT ''",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS output_language TEXT DEFAULT 'en'",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS archived INTEGER DEFAULT 0",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS created_at TEXT",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS updated_at TEXT",
+    # runs
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS owner_telegram_id BIGINT DEFAULT 0",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS quality_status TEXT DEFAULT 'ok'",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS warning_message TEXT",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS top_keywords_json TEXT",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS created_at TEXT",
+    "ALTER TABLE runs ADD COLUMN IF NOT EXISTS updated_at TEXT",
+    # exports
+    "ALTER TABLE exports ADD COLUMN IF NOT EXISTS owner_telegram_id BIGINT DEFAULT 0",
+    "ALTER TABLE exports ADD COLUMN IF NOT EXISTS project_id TEXT DEFAULT ''",
+    "ALTER TABLE exports ADD COLUMN IF NOT EXISTS monitor_id TEXT DEFAULT ''",
+    "ALTER TABLE exports ADD COLUMN IF NOT EXISTS file_name TEXT DEFAULT ''",
+    "ALTER TABLE exports ADD COLUMN IF NOT EXISTS file_size INTEGER",
+    "ALTER TABLE exports ADD COLUMN IF NOT EXISTS drive_file_id TEXT",
+    "ALTER TABLE exports ADD COLUMN IF NOT EXISTS drive_web_view_link TEXT",
+    "ALTER TABLE exports ADD COLUMN IF NOT EXISTS drive_download_link TEXT",
 ]
 
+# SQLite migrations: (table, column, typedef)
 _MIGRATIONS_SQLITE = [
     ("monitors", "owner_telegram_id",           "INTEGER DEFAULT 0"),
     ("monitors", "description",                 "TEXT DEFAULT ''"),
@@ -209,20 +271,33 @@ _MIGRATIONS_SQLITE = [
     ("monitors", "schedule_mode",               "TEXT DEFAULT 'manual'"),
     ("monitors", "frequency",                   "TEXT DEFAULT 'none'"),
     ("monitors", "next_run_at",                 "TEXT"),
+    ("monitors", "timezone",                    "TEXT DEFAULT 'UTC'"),
     ("monitors", "last_run_at",                 "TEXT"),
     ("monitors", "min_days_between_runs",       "INTEGER DEFAULT 7"),
     ("monitors", "max_runs_per_month",          "INTEGER DEFAULT 4"),
     ("monitors", "require_manual_confirmation", "INTEGER DEFAULT 1"),
     ("monitors", "archived",                    "INTEGER DEFAULT 0"),
+    ("monitors", "export_formats",              "TEXT DEFAULT '[\"xlsx\",\"json\"]'"),
+    ("monitors", "created_at",                  "TEXT"),
+    ("monitors", "updated_at",                  "TEXT"),
     ("projects", "owner_telegram_id",           "INTEGER DEFAULT 0"),
     ("projects", "niche",                       "TEXT DEFAULT ''"),
     ("projects", "target_market",               "TEXT DEFAULT ''"),
     ("projects", "output_language",             "TEXT DEFAULT 'en'"),
     ("projects", "archived",                    "INTEGER DEFAULT 0"),
+    ("projects", "created_at",                  "TEXT"),
     ("projects", "updated_at",                  "TEXT"),
+    ("runs",     "owner_telegram_id",           "INTEGER DEFAULT 0"),
     ("runs",     "quality_status",              "TEXT DEFAULT 'ok'"),
     ("runs",     "warning_message",             "TEXT"),
     ("runs",     "top_keywords_json",           "TEXT"),
+    ("runs",     "created_at",                  "TEXT"),
+    ("runs",     "updated_at",                  "TEXT"),
+    ("exports",  "owner_telegram_id",           "INTEGER DEFAULT 0"),
+    ("exports",  "project_id",                  "TEXT DEFAULT ''"),
+    ("exports",  "monitor_id",                  "TEXT DEFAULT ''"),
+    ("exports",  "file_name",                   "TEXT DEFAULT ''"),
+    ("exports",  "file_size",                   "INTEGER"),
     ("exports",  "drive_file_id",               "TEXT"),
     ("exports",  "drive_web_view_link",         "TEXT"),
     ("exports",  "drive_download_link",         "TEXT"),
@@ -230,21 +305,22 @@ _MIGRATIONS_SQLITE = [
 
 
 def init_db() -> None:
+    """Create tables and run idempotent migrations. Safe to call multiple times."""
     conn = _get_conn()
     try:
-        if _USE_PG:
+        if _use_pg():
             cur = conn.cursor()
-            for stmt in _SCHEMA.split(";"):
-                stmt = stmt.strip()
-                if stmt:
-                    cur.execute(stmt)
+            for stmt in _SCHEMA_STMTS:
+                cur.execute(stmt)
             for sql in _MIGRATIONS_PG:
                 try:
                     cur.execute(sql)
                 except Exception:
-                    pass
+                    pass  # column already exists
         else:
-            conn.executescript(_SCHEMA)
+            for stmt in _SCHEMA_STMTS:
+                conn.execute(stmt)
+            conn.commit()
             for table, col, typedef in _MIGRATIONS_SQLITE:
                 try:
                     existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -253,9 +329,37 @@ def init_db() -> None:
                 except Exception:
                     pass
         _commit(conn)
-        logger.debug(f"DB ready ({'postgres' if _USE_PG else _SQLITE_PATH})")
+        db_type = "postgres" if _use_pg() else f"sqlite:{_SQLITE_PATH}"
+        logger.debug(f"DB ready ({db_type})")
     finally:
         conn.close()
+
+
+# ── Health check / debug info ──────────────────────────────────────────────────
+
+def get_db_info() -> Dict[str, Any]:
+    """Return a dict with connection status, DB type, and table counts."""
+    info: Dict[str, Any] = {
+        "db_type":   "postgres" if _use_pg() else "sqlite",
+        "db_url_set": bool(_db_url()),
+        "connected": False,
+        "error":     None,
+        "counts":    {},
+    }
+    tables = ["users", "projects", "monitors", "subreddit_presets",
+              "keyword_presets", "runs", "exports"]
+    try:
+        conn = _get_conn()
+        try:
+            for t in tables:
+                row = _one(conn, f"SELECT COUNT(*) as cnt FROM {t}")
+                info["counts"][t] = int(row["cnt"]) if row else 0
+            info["connected"] = True
+        finally:
+            conn.close()
+    except Exception as e:
+        info["error"] = str(e)
+    return info
 
 
 # ── Helpers for dataclass <-> dict ─────────────────────────────────────────────
@@ -330,7 +434,7 @@ def update_project(p: Project) -> None:
 
 
 def upsert_project(p: Project) -> None:
-    """Backward-compatible upsert (used by config_loader for system projects)."""
+    """Backward-compatible upsert (used by config_loader for monitors.yaml)."""
     conn = _get_conn()
     try:
         _exec(conn, """
@@ -366,8 +470,7 @@ def list_projects(
 ) -> List[Project]:
     conn = _get_conn()
     try:
-        conditions = []
-        params = []
+        conditions, params = [], []
         if owner_telegram_id is not None:
             conditions.append("owner_telegram_id=?")
             params.append(owner_telegram_id)
@@ -387,7 +490,8 @@ def count_active_projects(owner_telegram_id: int) -> int:
     conn = _get_conn()
     try:
         row = _one(conn,
-            "SELECT COUNT(*) as cnt FROM projects WHERE owner_telegram_id=? AND archived=0 AND enabled=1",
+            "SELECT COUNT(*) as cnt FROM projects "
+            "WHERE owner_telegram_id=? AND archived=0 AND enabled=1",
             (owner_telegram_id,))
         return int(row["cnt"]) if row else 0
     finally:
@@ -397,7 +501,8 @@ def count_active_projects(owner_telegram_id: int) -> int:
 def archive_project(project_id: str) -> None:
     conn = _get_conn()
     try:
-        _exec(conn, "UPDATE projects SET archived=1, updated_at=? WHERE id=?", (_now(), project_id))
+        _exec(conn, "UPDATE projects SET archived=1, updated_at=? WHERE id=?",
+              (_now(), project_id))
         _commit(conn)
     finally:
         conn.close()
@@ -526,7 +631,8 @@ def count_active_monitors(project_id: str) -> int:
     conn = _get_conn()
     try:
         row = _one(conn,
-            "SELECT COUNT(*) as cnt FROM monitors WHERE project_id=? AND archived=0 AND enabled=1",
+            "SELECT COUNT(*) as cnt FROM monitors "
+            "WHERE project_id=? AND archived=0 AND enabled=1",
             (project_id,))
         return int(row["cnt"]) if row else 0
     finally:
@@ -536,7 +642,8 @@ def count_active_monitors(project_id: str) -> int:
 def archive_monitor(monitor_id: str) -> None:
     conn = _get_conn()
     try:
-        _exec(conn, "UPDATE monitors SET archived=1, updated_at=? WHERE id=?", (_now(), monitor_id))
+        _exec(conn, "UPDATE monitors SET archived=1, updated_at=? WHERE id=?",
+              (_now(), monitor_id))
         _commit(conn)
     finally:
         conn.close()
@@ -554,7 +661,7 @@ def get_active_run_for_monitor(monitor_id: str) -> Optional[Run]:
 
 
 def get_due_monitors() -> List[Monitor]:
-    """Return scheduled monitors whose next_run_at <= NOW."""
+    """Return scheduled monitors whose next_run_at <= NOW. Technical cron use only."""
     conn = _get_conn()
     try:
         now = _now()
@@ -568,22 +675,17 @@ def get_due_monitors() -> List[Monitor]:
         conn.close()
 
 
-def update_monitor_after_run(monitor_id: str, last_run_at: str, next_run_at: Optional[str]) -> None:
+def update_monitor_after_run(
+    monitor_id: str,
+    last_run_at: str,
+    next_run_at: Optional[str],
+) -> None:
     conn = _get_conn()
     try:
         _exec(conn,
             "UPDATE monitors SET last_run_at=?, next_run_at=?, updated_at=? WHERE id=?",
             (last_run_at, next_run_at, _now(), monitor_id))
         _commit(conn)
-    finally:
-        conn.close()
-
-
-def get_queued_runs() -> List[Run]:
-    conn = _get_conn()
-    try:
-        rows = _rows(conn, "SELECT * FROM runs WHERE status='queued' ORDER BY started_at ASC")
-        return [_to_model(Run, r) for r in rows]
     finally:
         conn.close()
 
@@ -605,10 +707,12 @@ def create_run(run: Run) -> None:
     conn = _get_conn()
     try:
         _exec(conn,
-            "INSERT INTO runs (id,monitor_id,project_id,status,started_at,quality_status) "
-            "VALUES (?,?,?,?,?,?)",
-            (run.id, run.monitor_id, run.project_id, run.status,
-             run.started_at or _now(), run.quality_status or "ok"))
+            "INSERT INTO runs "
+            "(id,monitor_id,project_id,owner_telegram_id,status,started_at,quality_status,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (run.id, run.monitor_id, run.project_id, run.owner_telegram_id,
+             run.status, run.started_at or _now(),
+             run.quality_status or "ok", _now(), _now()))
         _commit(conn)
     finally:
         conn.close()
@@ -621,11 +725,13 @@ def update_run(run: Run) -> None:
             UPDATE runs SET
                 status=?,finished_at=?,total_posts=?,total_comments=?,
                 quality_status=?,warning_message=?,error_message=?,
-                export_path=?,handoff_json_path=?,top_keywords_json=?
+                export_path=?,handoff_json_path=?,top_keywords_json=?,
+                updated_at=?
             WHERE id=?
         """, (run.status, run.finished_at, run.total_posts, run.total_comments,
               run.quality_status, run.warning_message, run.error_message,
-              run.export_path, run.handoff_json_path, run.top_keywords_json, run.id))
+              run.export_path, run.handoff_json_path, run.top_keywords_json,
+              _now(), run.id))
         _commit(conn)
     finally:
         conn.close()
@@ -640,7 +746,12 @@ def get_run(run_id: str) -> Optional[Run]:
         conn.close()
 
 
-def list_runs(limit: int = 20, monitor_id: str = None, project_id: str = None) -> List[Run]:
+def list_runs(
+    limit: int = 20,
+    monitor_id: str = None,
+    project_id: str = None,
+    owner_telegram_id: int = None,
+) -> List[Run]:
     conn = _get_conn()
     try:
         conditions, params = [], []
@@ -648,6 +759,8 @@ def list_runs(limit: int = 20, monitor_id: str = None, project_id: str = None) -
             conditions.append("monitor_id=?"); params.append(monitor_id)
         if project_id:
             conditions.append("project_id=?"); params.append(project_id)
+        if owner_telegram_id is not None:
+            conditions.append("owner_telegram_id=?"); params.append(owner_telegram_id)
         q = "SELECT * FROM runs"
         if conditions:
             q += " WHERE " + " AND ".join(conditions)
@@ -659,16 +772,47 @@ def list_runs(limit: int = 20, monitor_id: str = None, project_id: str = None) -
         conn.close()
 
 
+def list_runs_by_status(status: str, limit: int = 100) -> List[Run]:
+    """Get runs by status — used by cron runner to pick up queued runs."""
+    conn = _get_conn()
+    try:
+        rows = _rows(conn,
+            "SELECT * FROM runs WHERE status=? ORDER BY created_at ASC LIMIT ?",
+            (status, limit))
+        return [_to_model(Run, r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_queued_runs() -> List[Run]:
+    """Alias kept for backward compat."""
+    return list_runs_by_status("queued")
+
+
+def get_run_status_counts() -> Dict[str, int]:
+    """Returns counts per status — used by /status health check."""
+    conn = _get_conn()
+    try:
+        rows = _rows(conn, "SELECT status, COUNT(*) as cnt FROM runs GROUP BY status")
+        return {r["status"]: int(r["cnt"]) for r in rows}
+    finally:
+        conn.close()
+
+
 # ── Exports ────────────────────────────────────────────────────────────────────
 
 def create_export(export: Export) -> None:
     conn = _get_conn()
     try:
         _exec(conn,
-            "INSERT INTO exports (id,run_id,format,file_path,drive_file_id,"
+            "INSERT INTO exports "
+            "(id,run_id,owner_telegram_id,project_id,monitor_id,format,"
+            "file_name,file_path,file_size,drive_file_id,"
             "drive_web_view_link,drive_download_link,created_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (export.id, export.run_id, export.format, export.file_path,
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (export.id, export.run_id, export.owner_telegram_id,
+             export.project_id, export.monitor_id, export.format,
+             export.file_name, export.file_path, export.file_size,
              export.drive_file_id, export.drive_web_view_link,
              export.drive_download_link, export.created_at or _now()))
         _commit(conn)
@@ -676,13 +820,20 @@ def create_export(export: Export) -> None:
         conn.close()
 
 
-def update_export_drive(export_id: str, drive_file_id: str,
-                        drive_web_view_link: str, drive_download_link: str) -> None:
+def update_export_drive(
+    export_id: str,
+    drive_file_id: str,
+    drive_web_view_link: str,
+    drive_download_link: str,
+    file_size: Optional[int] = None,
+) -> None:
     conn = _get_conn()
     try:
         _exec(conn,
-            "UPDATE exports SET drive_file_id=?,drive_web_view_link=?,drive_download_link=? WHERE id=?",
-            (drive_file_id, drive_web_view_link, drive_download_link, export_id))
+            "UPDATE exports SET drive_file_id=?,drive_web_view_link=?,"
+            "drive_download_link=?,file_size=? WHERE id=?",
+            (drive_file_id, drive_web_view_link, drive_download_link,
+             file_size, export_id))
         _commit(conn)
     finally:
         conn.close()
@@ -691,7 +842,9 @@ def update_export_drive(export_id: str, drive_file_id: str,
 def list_exports_for_run(run_id: str) -> List[Export]:
     conn = _get_conn()
     try:
-        rows = _rows(conn, "SELECT * FROM exports WHERE run_id=? ORDER BY created_at", (run_id,))
+        rows = _rows(conn,
+            "SELECT * FROM exports WHERE run_id=? ORDER BY created_at",
+            (run_id,))
         return [_to_model(Export, r) for r in rows]
     finally:
         conn.close()

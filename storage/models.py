@@ -125,15 +125,18 @@ class Run:
     project_id: str
     status: str
     started_at: str
-    finished_at: Optional[str]      = None
-    total_posts: int                = 0
-    total_comments: int             = 0
-    quality_status: str             = "ok"
+    owner_telegram_id: int           = 0
+    finished_at: Optional[str]       = None
+    total_posts: int                 = 0
+    total_comments: int              = 0
+    quality_status: str              = "ok"
     warning_message: Optional[str]  = None
     error_message: Optional[str]    = None
     export_path: Optional[str]      = None
     handoff_json_path: Optional[str] = None
     top_keywords_json: Optional[str] = None
+    created_at: str                  = ""
+    updated_at: str                  = ""
 
 
 @dataclass
@@ -142,6 +145,11 @@ class Export:
     run_id: str
     format: str
     file_path: str                        = ""
+    owner_telegram_id: int                = 0
+    project_id: str                       = ""
+    monitor_id: str                       = ""
+    file_name: str                        = ""
+    file_size: Optional[int]              = None
     drive_file_id: Optional[str]          = None
     drive_web_view_link: Optional[str]    = None
     drive_download_link: Optional[str]    = None
@@ -150,5 +158,9 @@ class Export:
 
 # ── Limits ─────────────────────────────────────────────────────────────────────
 
-MAX_ACTIVE_PROJECTS_PER_USER  = 3
-MAX_ACTIVE_MONITORS_PER_PROJECT = 5
+MAX_ACTIVE_PROJECTS_PER_USER    = int(__import__("os").environ.get("MAX_ACTIVE_PROJECTS_PER_USER", "3"))
+MAX_ACTIVE_MONITORS_PER_PROJECT = int(__import__("os").environ.get("MAX_ACTIVE_MONITORS_PER_PROJECT", "5"))
+MAX_MANUAL_RUNS_PER_DAY         = int(__import__("os").environ.get("MAX_MANUAL_RUNS_PER_DAY", "5"))
+MAX_TOTAL_RUNS_PER_MONTH        = int(__import__("os").environ.get("MAX_TOTAL_RUNS_PER_MONTH", "30"))
+
+APP_VERSION = "5.3"

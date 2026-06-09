@@ -142,7 +142,7 @@ def export_handoff(
     custom_kws  = json.loads(getattr(monitor, "custom_keywords",   "[]") or "[]")
 
     payload = {
-        "schema_version": "5.2",
+        "schema_version": "5.3",
         "owner": {
             "telegram_id": str(monitor.owner_telegram_id),
         },

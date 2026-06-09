@@ -463,25 +463,85 @@ async def cmd_presets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = get_uid(update)
+    lines = ["🔧 <b>Статус системы</b>\n"]
+
+    # ── Database ──────────────────────────────────────────────────────────────
     try:
         db.init_db()
-        mons = db.list_monitors()
-        db_ok = f"✅ {'Postgres' if os.environ.get('DATABASE_URL') else 'SQLite'} ({len(mons)} мониторов)"
+        info = db.get_db_info()
+        db_type = info["db_type"].upper()
+        if info["connected"]:
+            db_line = f"✅ {db_type} — подключено"
+        else:
+            db_line = f"❌ {db_type} — ошибка: {str(info.get('error',''))[:60]}"
     except Exception as e:
-        db_ok = f"❌ {str(e)[:60]}"
+        db_line  = f"❌ Ошибка: {str(e)[:60]}"
+        info = {}
 
-    from drive_uploader import DRIVE_ENABLED
-    drive_ok = "✅ Настроен" if DRIVE_ENABLED else "⚠️ Не настроен"
+    lines.append(f"📦 <b>База данных:</b> {db_line}")
 
-    env = "Railway" if os.environ.get("RAILWAY_ENVIRONMENT") else "Локальный"
-    await update.message.reply_text(
-        f"🔧 <b>Статус системы</b>\n\n"
-        f"📦 <b>База данных:</b> {db_ok}\n"
-        f"☁️ <b>Google Drive:</b> {drive_ok}\n"
-        f"🌍 <b>Окружение:</b> {env}\n"
-        f"⏰ <b>Scheduler:</b> Railway cron (*/30 * * * * UTC)\n",
-        parse_mode="HTML",
-    )
+    # ── Google Drive ──────────────────────────────────────────────────────────
+    try:
+        from drive_uploader import DRIVE_ENABLED
+        drive_line = "✅ Настроен" if DRIVE_ENABLED else "⚠️ Не настроен (файлы только локально)"
+    except Exception:
+        drive_line = "❌ Ошибка импорта"
+    lines.append(f"☁️ <b>Google Drive:</b> {drive_line}")
+
+    # ── Reddit API ────────────────────────────────────────────────────────────
+    has_reddit = bool(os.environ.get("REDDIT_CLIENT_ID") and os.environ.get("REDDIT_CLIENT_SECRET"))
+    reddit_line = "✅ Настроен" if has_reddit else "⚠️ Не настроен (нужен REDDIT_CLIENT_ID/SECRET)"
+    lines.append(f"🌐 <b>Reddit API:</b> {reddit_line}")
+
+    # ── User stats ────────────────────────────────────────────────────────────
+    lines.append("")
+    try:
+        active_proj = db.count_active_projects(uid)
+        from storage.models import MAX_ACTIVE_PROJECTS_PER_USER
+        lines.append(f"📁 <b>Мои проекты:</b> {active_proj}/{MAX_ACTIVE_PROJECTS_PER_USER} активных")
+
+        all_monitors = db.list_monitors(owner_telegram_id=uid)
+        active_mon = sum(1 for m in all_monitors if not m.archived and m.enabled)
+        sched_mon  = sum(1 for m in all_monitors if m.schedule_mode == "scheduled")
+        lines.append(f"📡 <b>Мои мониторы:</b> {active_mon} активных, {sched_mon} с расписанием")
+    except Exception:
+        pass
+
+    # ── Run queue ─────────────────────────────────────────────────────────────
+    try:
+        status_counts = db.get_run_status_counts()
+        queued  = status_counts.get("queued", 0)
+        running = status_counts.get("running", 0)
+        if queued or running:
+            lines.append(f"⚙️ <b>Очередь:</b> {queued} в очереди, {running} выполняется")
+    except Exception:
+        pass
+
+    # ── Last run ──────────────────────────────────────────────────────────────
+    try:
+        recent = db.list_runs(limit=1, owner_telegram_id=uid)
+        if recent:
+            lr = recent[0]
+            icon = {"completed": "✅", "completed_with_warning": "⚠️",
+                    "failed": "❌", "running": "⚙️"}.get(lr.status, "📋")
+            lines.append(
+                f"\n{icon} <b>Последний запуск:</b> {lr.monitor_id}\n"
+                f"   {lr.status} | {lr.total_posts}p/{lr.total_comments}c | "
+                f"{(lr.started_at or '')[:16]}"
+            )
+    except Exception:
+        pass
+
+    # ── Environment ───────────────────────────────────────────────────────────
+    lines.append("")
+    env  = "Railway" if os.environ.get("RAILWAY_ENVIRONMENT") else "Локальный"
+    tz   = os.environ.get("APP_TIMEZONE", "UTC")
+    from storage.models import APP_VERSION
+    lines.append(f"🌍 <b>Окружение:</b> {env} | TZ: {tz} | v{APP_VERSION}")
+    lines.append(f"⏰ <b>Cron:</b> 0 */6 * * * (каждые 6 часов, только scheduled мониторы)")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 # ── Callback handlers for inline buttons ──────────────────────────────────────
