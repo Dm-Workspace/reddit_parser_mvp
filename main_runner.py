@@ -27,6 +27,13 @@ import argparse
 import os
 import sys
 
+# ── Load .env before any os.environ reads or lazy module imports ──────────────
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except ImportError:
+    pass   # Railway injects ENV directly — dotenv not required
+
 from loguru import logger
 
 

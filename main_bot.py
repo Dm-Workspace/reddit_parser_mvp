@@ -10,6 +10,14 @@ ENV:
 import os
 import sys
 
+# ── Load .env FIRST — before any os.environ reads or module imports ───────────
+try:
+    from dotenv import load_dotenv
+    _dotenv_loaded = load_dotenv()
+except ImportError:
+    _dotenv_loaded = False   # Railway injects ENV directly — dotenv not required
+
+
 from loguru import logger
 from utils.logger import setup_logger
 
@@ -23,14 +31,21 @@ except ImportError:
     print("python-telegram-bot not installed. Run: pip install python-telegram-bot")
     sys.exit(1)
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-
 
 def main():
     setup_logger("INFO")
 
+    # Read token AFTER load_dotenv() so local .env is picked up
+    BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
+    # ── Startup diagnostics (no secrets printed) ──────────────────────────────
+    logger.debug(f".env loaded         : {'yes' if _dotenv_loaded else 'no (Railway/system ENV used)'}")
+    logger.info (f"TELEGRAM_BOT_TOKEN  : {'SET' if BOT_TOKEN else 'NOT SET'}")
+    logger.info (f"ADMIN_TELEGRAM_IDS  : {'SET' if os.environ.get('ADMIN_TELEGRAM_IDS') else 'NOT SET'}")
+    logger.debug(f"REDDIT_ACCESS_MODE  : {os.environ.get('REDDIT_ACCESS_MODE', 'playwright (default)')}")
+
     if not BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN is not set")
+        logger.error("TELEGRAM_BOT_TOKEN is not set — add it to .env or Railway ENV variables")
         sys.exit(1)
 
     # ── Init DB + seed system presets ──────────────────────────────────────────
@@ -43,7 +58,7 @@ def main():
     except Exception as e:
         logger.error(f"Startup init failed: {e}")
 
-    # ── Build app ──────────────────────────────────────────────────────────────
+    # ── Build Telegram Application ────────────────────────────────────────────
     app = Application.builder().token(BOT_TOKEN).build()
 
     # ── Conversation handlers (must be first — they intercept text messages) ──
