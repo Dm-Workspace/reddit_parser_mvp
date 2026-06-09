@@ -1,9 +1,23 @@
-# Multi-Monitor Trend Intelligence System v5
+# Multi-Monitor Trend Intelligence System v5.2
 
-Reddit trend parser with Telegram management, Railway cloud deployment,
+Universal Reddit trend parser with Telegram management, Railway cloud deployment,
 Google Drive storage, and AI-ready handoff JSON.
 
-No Reddit API keys required — uses Playwright (headless Chrome).
+**No Reddit API keys required** — uses Playwright (headless Chrome).  
+**No hardcoded projects** — users create their own projects and monitors via Telegram.
+
+---
+
+## Key Design Principles
+
+| Principle | Detail |
+|-----------|--------|
+| **User-driven** | Projects and monitors created through Telegram conversation, not config files |
+| **Manual-first** | All new monitors default to `schedule_mode=manual` — nothing runs automatically until you enable it |
+| **Per-user isolation** | Each user owns their projects, monitors, and Drive folder |
+| **Limits** | Max 3 active projects per user, max 5 active monitors per project |
+| **Railway cron = technical checker** | Cron only runs monitors explicitly set to `schedule_mode=scheduled` |
+| **Run protection** | If last run was < `min_days_between_runs` (default 7) ago, bot shows a force-confirm warning |
 
 ---
 
@@ -12,32 +26,36 @@ No Reddit API keys required — uses Playwright (headless Chrome).
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Telegram Bot  ←→  You                                       │
-│  /run /monitors /download /drive                             │
+│  /projects /create_project /monitors /run /latest /drive     │
 └────────────┬────────────────────────────────────────────────┘
              │
 ┌────────────▼──────────────┐   ┌──────────────────────────────┐
 │  Railway — telegram-bot   │   │  Railway — cron-runner        │
 │  python main_bot.py       │   │  python main_runner.py        │
 │                           │   │  --run-due-monitors           │
-│  • reads DB               │   │  --run-queued                 │
-│  • queues runs            │   │                               │
-│  • sends files / links    │   │  • checks cron schedules      │
-└────────────┬──────────────┘   │  • runs Playwright scraper   │
-             │                  │  • exports xlsx/json          │
-             │                  │  • uploads to Google Drive    │
-             └───────┬──────────┘
-                     │
-          ┌──────────▼──────────┐
-          │  Postgres (Railway) │  — metadata only
-          │  projects / monitors│  — run history
-          │  runs / exports     │  — drive links
-          └─────────────────────┘
-                     │
-          ┌──────────▼──────────┐
-          │  Google Drive       │  — full data files
-          │  project/monitor/   │  — xlsx, json
-          │  YYYY-MM-DD/        │  — handoff.json
-          └─────────────────────┘
+│  • conversation flows     │   │  --run-queued                 │
+│  • creates projects/      │   │                               │
+│    monitors via inline    │   │  • queries next_run_at<=NOW   │
+│    keyboard dialogs       │   │  • runs Playwright scraper    │
+│  • queues runs on /run    │   │  • exports xlsx/json          │
+│  • sends files / links    │   │  • uploads to Google Drive    │
+└────────────┬──────────────┘   └──────────────────────────────┘
+             │                             │
+             └───────────┬─────────────────┘
+                         │
+              ┌──────────▼──────────┐
+              │  Postgres (Railway) │  — metadata only
+              │  users / projects   │  — monitors / runs
+              │  exports            │  — drive links
+              └──────────┬──────────┘
+                         │
+              ┌──────────▼──────────┐
+              │  Google Drive       │  — full data files
+              │  {owner_id}/        │
+              │    {project_id}/    │  — xlsx, json
+              │      {monitor_id}/  │  — handoff.json
+              │        YYYY-MM-DD/  │
+              └─────────────────────┘
 ```
 
 **Key principle:** Postgres stores only metadata. Full post/comment data lives on Google Drive.
@@ -53,346 +71,239 @@ playwright install chromium
 
 # 2. Configure
 cp .env.example .env
-# edit .env with your tokens
+# Edit .env: set TELEGRAM_BOT_TOKEN, ADMIN_TELEGRAM_IDS
 
-# 3. Direct parse (no DB, no monitors)
-python main.py parse --subreddit-preset wellness_en --keyword-preset wellness_en --run-mode hot_last_7d
-
-# 4. Run a monitor
-python main.py run-monitor --monitor-id wellness_hot
-
-# 5. Start Telegram bot
+# 3. Run bot locally
 python main_bot.py
 
-# 6. Start cron runner
-python main_runner.py --run-due-monitors
+# 4. Or run CLI parser directly
+python main.py parse --help
 ```
 
 ---
 
-## Environment Variables
+## Creating Your First Project
 
-Copy `.env.example` to `.env`:
+All projects and monitors are created through the Telegram bot:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Yes (bot) | From @BotFather |
-| `ADMIN_TELEGRAM_IDS` | Yes (bot) | Comma-separated Telegram user IDs |
-| `DATABASE_URL` | Railway | Postgres URL. Empty = SQLite fallback |
-| `GOOGLE_DRIVE_FOLDER_ID` | Drive | Root folder ID from Drive URL |
-| `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` | Drive | Base64-encoded service account JSON |
-| `MAX_POSTS_TOTAL` | No | Max posts per run (default: 500) |
-| `MAX_COMMENTS_TOTAL` | No | Max comments per run (default: 5000) |
-| `CLEANUP_LOCAL_FILES` | No | `true` = delete local files after Drive upload |
+### Step 1 — Create a project
 
----
+Send `/create_project` to the bot. The bot will ask:
 
-## Railway Setup
+1. **Project name** — e.g. "Wellness Products"
+2. **Description** — what you're monitoring
+3. **Niche** — e.g. "health & wellness"
+4. **Language** — RU / EN / UK
+5. **Confirm** — review and create
 
-### Step 1 — Create project on Railway
+### Step 2 — Create a monitor
 
-1. Go to [railway.app](https://railway.app) → New Project → Deploy from GitHub
-2. Select your `reddit_parser_mvp` repo
+After creating a project, send `/create_monitor <project_id>`. The bot asks:
 
-### Step 2 — Add Postgres
+1. **Monitor name** — e.g. "Hot Posts Weekly"
+2. **Description**
+3. **Subreddit preset** — choose from system presets or enter custom subreddits
+4. **Keyword preset** — choose from system presets or enter custom keywords (optional)
+5. **Run mode** — hot_last_7d / rising_24h / top_week / top_month
+6. **Schedule** — manual (default) / weekly / biweekly / monthly / disabled
+7. **Confirm**
 
-1. In Railway project → New → Database → Add PostgreSQL
-2. Copy `DATABASE_URL` from the database service → Connect tab
-3. Add as environment variable to your services
+### Step 3 — Run it
 
-### Step 3 — Create two services
-
-**Service 1: telegram-bot**
-- Start command: `python main_bot.py`
-- Env vars: `TELEGRAM_BOT_TOKEN`, `ADMIN_TELEGRAM_IDS`, `DATABASE_URL`,
-  `GOOGLE_DRIVE_FOLDER_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64`
-
-**Service 2: cron-runner**
-- Type: Cron
-- Schedule: `*/30 * * * *` (every 30 min, UTC)
-- Command: `python main_runner.py --run-due-monitors --run-queued`
-- Same env vars as telegram-bot
-
-> **Note:** Railway cron runs in UTC. Timezone-aware schedule checks are done inside the app using each monitor's `timezone` field from `monitors.yaml`.
-
-### Step 4 — Set environment variables
-
-In each Railway service → Variables tab, add all required ENV vars.
-
-### Step 5 — Deploy
-
-Push to GitHub → Railway auto-deploys.
+After monitor is created: tap **▶️ Запустить** button, or send `/run <monitor_id>`.
 
 ---
 
-## Telegram Bot Setup
+## Limits
 
-1. Message @BotFather → `/newbot`
-2. Follow prompts, copy the token
-3. Set `TELEGRAM_BOT_TOKEN=<token>` in Railway env vars
-4. Get your Telegram user ID: message @userinfobot
-5. Set `ADMIN_TELEGRAM_IDS=<your_id>` (comma-separated for multiple admins)
-
-### Bot Commands
-
-```
-/start                   — welcome & command list
-/projects                — list projects
-/monitors                — monitors with last run status
-/run <monitor_id>        — start a monitor run
-/latest                  — latest run per monitor
-/runs [limit]            — recent run history (default: 10)
-/download <run_id>       — get Excel file in chat
-/drive <run_id>          — Google Drive links for run
-/status                  — system status (DB, Drive, env)
-```
-
-Example session:
-```
-You: /run wellness_hot
-Bot: 🚀 Run started! Run ID: abc123
-     ⏱ Parsing Reddit... takes 5–10 min. I'll send results when done.
-
-[5 minutes later]
-Bot: ✅ Run COMPLETED
-     📊 Posts: 91  💬 Comments: 922
-     🔑 Top keywords: energy (23), fatigue (18), supplement (15)
-     ☁️ Google Drive:
-       📊 XLSX: https://drive.google.com/...
-       📄 JSON: https://drive.google.com/...
-       🤖 HANDOFF JSON: https://drive.google.com/...
-```
+| Entity | Limit |
+|--------|-------|
+| Active projects per user | **3** (archived don't count) |
+| Active monitors per project | **5** (archived don't count) |
+| Default schedule | **manual** (cron never touches it) |
+| Min days between runs | **7** (configurable per monitor) |
+| Max runs per month | **4** (configurable per monitor) |
 
 ---
 
-## Google Drive Setup
+## Schedule Modes
 
-### Create Service Account
+| Mode | Behaviour |
+|------|-----------|
+| `manual` | Only runs when you explicitly trigger it via bot or CLI. Default for all new monitors. |
+| `scheduled` | Railway cron checks `next_run_at <= NOW()` and runs automatically. |
+| `disabled` | No runs of any kind. |
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com)
-2. Create new project (or use existing)
-3. Enable **Google Drive API**: APIs & Services → Enable APIs → search "Google Drive API"
-4. Go to IAM & Admin → Service Accounts → Create Service Account
-5. Name it (e.g. `trend-intelligence-drive`)
-6. Click the service account → Keys tab → Add Key → Create new key → JSON
-7. Download the JSON file
+To change schedule via bot: open monitor menu → 🕒 Расписание.  
+To change via CLI: `/schedule_manual <id>`, `/schedule_weekly <id> <day> <HH:MM>`, etc.
 
-### Encode as base64
+---
+
+## Telegram Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Main menu |
+| `/projects` | List your projects |
+| `/create_project` | Create a new project (5-step conversation) |
+| `/monitors [project_id]` | List monitors |
+| `/create_monitor <project_id>` | Create a monitor (7-step conversation) |
+| `/run <monitor_id>` | Run a monitor (with protection check) |
+| `/schedule <monitor_id>` | Open schedule menu |
+| `/next_runs` | Show upcoming scheduled runs |
+| `/runs [monitor_id]` | Run history |
+| `/latest [monitor_id]` | Last run summary |
+| `/download <run_id>` | Download export file |
+| `/drive <run_id>` | Show Drive links for a run |
+| `/presets` | List available subreddit/keyword presets |
+| `/status` | System status (DB, Drive, scheduler) |
+| `/archive_project <id>` | Archive a project |
+| `/archive_monitor <id>` | Archive a monitor |
+
+---
+
+## Railway Deployment
+
+### 1. Set environment variables
+
+```
+TELEGRAM_BOT_TOKEN=...
+ADMIN_TELEGRAM_IDS=123456789,987654321
+DATABASE_URL=postgresql://...        # Railway Postgres add-on
+GOOGLE_DRIVE_FOLDER_ID=...
+GOOGLE_SERVICE_ACCOUNT_JSON_BASE64=...
+MAX_POSTS_TOTAL=500
+MAX_COMMENTS_TOTAL=5000
+CLEANUP_LOCAL_FILES=true
+```
+
+### 2. Deploy
 
 ```bash
-python -c "import base64; print(base64.b64encode(open('service-account-key.json','rb').read()).decode())"
+git push railway main
 ```
 
-Copy the output → set as `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64`.
+Railway uses `railway.json` which starts `python main_bot.py`.
 
-### Give service account access to your Drive folder
+### 3. Add cron service
 
-1. In Google Drive, right-click the root folder → Share
-2. Add the service account email (looks like `name@project.iam.gserviceaccount.com`)
-3. Give **Editor** access
-4. Copy the folder ID from the URL → set as `GOOGLE_DRIVE_FOLDER_ID`
-
-### Drive folder structure
+In Railway dashboard, add a second service from the same repo with start command:
 
 ```
-Trend Intelligence Hub/           ← your root folder
-  energy_reboot/
-    wellness_hot/
-      2026-06-09/
-        report_090215.xlsx
-        report_090215.json
-        abc123_handoff.json
-  up_level/
-    up_level_crm/
-      2026-06-09/
-        ...
+python main_runner.py --run-due-monitors --run-queued
 ```
 
----
+Set cron schedule: `*/30 * * * *` (every 30 minutes).
 
-## monitors.yaml
-
-All monitors and projects are defined in `monitors.yaml`:
-
-```yaml
-projects:
-  - id: energy_reboot
-    name: Energy Reboot
-    description: "Women wellness market"
-    language: en
-    market: women wellness
-    default_output_language: ru
-    enabled: true
-
-monitors:
-  - id: wellness_hot
-    project_id: energy_reboot
-    name: Wellness Hot 7 Days
-    source: reddit
-    subreddit_preset: wellness_en   # 13 EN wellness subreddits
-    keyword_preset: wellness_en
-    run_mode: hot_last_7d
-    schedule_cron: "0 8 * * *"      # daily at 08:00
-    timezone: Europe/Podgorica
-    enabled: true
-    export_formats:
-      - xlsx
-      - json
-```
-
-Changes to `monitors.yaml` are synced to DB automatically on bot start and each runner invocation.
+The cron **only runs monitors with `schedule_mode=scheduled`** — it never touches manual monitors.
 
 ---
 
-## Run Modes
-
-| Mode | Sort | Period | Posts/sub |
-|------|------|--------|-----------|
-| `hot_last_7d` | hot | last 7 days | 100 |
-| `top_week` | top | last 7 days | 100 |
-| `top_month` | top | last 30 days | 100 |
-| `rising_24h` | rising | last 24 hours | 100 |
-
----
-
-## AI Handoff JSON
-
-Every run creates `{run_id}_handoff.json` — structured data for AI processing.
-
-```json
-{
-  "schema_version": "5.1",
-  "project":  { "id": "energy_reboot", "market": "women wellness", ... },
-  "monitor":  { "id": "wellness_hot", "run_mode": "hot_last_7d", ... },
-  "run":      { "id": "abc123", "status": "completed", "total_posts": 91 },
-  "summary": {
-    "pain_signal_distribution": { "energy_fatigue": 23, "sleep_problem": 17 },
-    "analysis_priority_distribution": { "high": 12, "medium": 45 }
-  },
-  "top_posts":          [...],   // top 30 by trend_score
-  "keyword_summary":    [...],   // keyword frequency
-  "selected_comments":  [...],   // top 200 comments from top posts
-  "recommended_ai_tasks": [
-    "extract_trends",
-    "extract_pains",
-    "extract_questions",
-    "extract_language_patterns",
-    "generate_content_angles",
-    "prepare_channel_mapping"
-  ]
-}
-```
-
-**How to use manually:**
-1. Download handoff JSON via `/download` or `/drive` command
-2. Open Claude / ChatGPT
-3. Paste the file content or upload it
-4. Prompt: "Based on this Reddit data, do: extract_trends — write a trend summary for [market]"
-
----
-
-## Cron Runner Logic
-
-`main_runner.py --run-due-monitors`:
-
-1. Syncs `monitors.yaml` → DB
-2. For each enabled monitor:
-   - Gets last completed run time
-   - Uses `croniter` to compute when cron last should have fired
-   - If expected fire time > last run time: **run it**
-   - If no previous run: run if expected fire was within last 35 min
-   - Skips if monitor already running (concurrent protection)
-3. Also runs any `queued` runs created by the bot (`--run-queued`)
-
-Railway cron fires every 30 min (UTC). The schedule due-check is timezone-aware using each monitor's `timezone` field.
-
----
-
-## Why Only Metadata in Postgres?
-
-Full Reddit posts and comments can be **hundreds of MB per run**. Storing them in Postgres would:
-- Hit Railway Postgres free tier limits fast
-- Slow down queries
-- Cost money at scale
-
-**Solution:** DB stores only metadata (run status, post counts, Drive links).
-Full data lives on Google Drive as structured files (xlsx, json, handoff.json).
-
-The handoff.json includes a curated subset: top 30 posts + top 200 comments — enough for AI analysis.
-
----
-
-## CLI Commands (v5)
+## CLI Usage (Local / Advanced)
 
 ```bash
-# Direct parse (no DB, no monitors)
-python main.py parse --subreddit-preset wellness_en --keyword-preset wellness_en --run-mode hot_last_7d
+# Parse subreddits directly
+python main.py parse --subreddits fitness yoga --keywords "protein shake" --sort hot
 
-# Monitor management
-python main.py list-monitors
-python main.py run-monitor --monitor-id wellness_hot
+# Run a specific monitor
+python main.py run-monitor <monitor_id>
+
+# Run all enabled monitors
 python main.py run-all
+
+# List monitors
+python main.py list-monitors
+
+# List recent runs
 python main.py list-runs
 
-# Cron runner
-python main_runner.py --run-due-monitors
-python main_runner.py --run-monitor wellness_hot
-python main_runner.py --run-queued
-
-# Telegram bot
-python main_bot.py
-
-# APScheduler daemon (alternative to Railway cron)
+# Start local scheduler (APScheduler)
 python main.py scheduler
 ```
 
 ---
 
-## Excel Output Structure
+## Google Drive Structure
 
-| Sheet | Contents |
-|-------|---------|
-| Summary | Run overview |
-| Top Posts | Top 20 by trend_score, color-coded by priority |
-| Posts | All posts with analysis fields |
-| Comments | All comments |
-| Keyword Summary | Keyword frequency table |
-| Quality Check | Data quality diagnostics |
-| Run Settings | All run parameters |
+```
+{root_folder}/
+  {owner_telegram_id}/
+    {project_id}/
+      {monitor_id}/
+        YYYY-MM-DD/
+          {run_id}.xlsx
+          {run_id}.json
+          {run_id}_handoff.json
+```
 
----
-
-## Roadmap
-
-### Current: v5 Cloud MVP
-- ✅ Telegram bot management
-- ✅ Railway cron scheduling
-- ✅ Google Drive file storage
-- ✅ Postgres metadata DB
-- ✅ AI Handoff JSON
-
-### Next: v6 AI Processor
-- [ ] Claude/OpenAI API integration
-- [ ] Auto-process handoff JSON after each run
-- [ ] Send AI summary to Telegram
-- [ ] Store analysis results in DB
-
-### Later: v7 Web UI
-- [ ] React dashboard
-- [ ] Run history visualization
-- [ ] Trend charts
-- [ ] Project settings UI
+Each user's data is isolated under their Telegram ID.
 
 ---
 
-## Versions
+## AI Handoff JSON
 
-| Version | Key features |
+Every run produces `{run_id}_handoff.json` with:
+
+```json
+{
+  "schema_version": "5.2",
+  "owner": { "telegram_id": "..." },
+  "project": { "id": "...", "niche": "...", "output_language": "en" },
+  "monitor": {
+    "subreddit_preset": "...", "keyword_preset": "...",
+    "custom_subreddits": [], "custom_keywords": []
+  },
+  "run": { "quality_status": "ok|small_dataset", ... },
+  "summary": { "pain_signal_distribution": {}, ... },
+  "top_posts": [ ... ],          // top 30 by trend_score
+  "keyword_summary": [ ... ],
+  "selected_comments": [ ... ],  // top 200 from top-50 posts, min 50 chars
+  "recommended_ai_tasks": [
+    "extract_trends", "extract_pains", "extract_questions",
+    "extract_language_patterns", "generate_content_angles", "prepare_channel_mapping"
+  ]
+}
+```
+
+---
+
+## System Presets
+
+System subreddit and keyword presets are seeded from `config.py` to DB on startup.  
+Users can browse them with `/presets` and choose them when creating a monitor.  
+Users can also enter custom subreddits/keywords instead.
+
+---
+
+## monitors.yaml (Optional / Backward Compat)
+
+If `monitors.yaml` exists, it is loaded on startup and synced to DB.  
+These "yaml monitors" get `owner_telegram_id=0` (system-owned).  
+This is for power users / migration from v4. For new setups, use the Telegram bot.
+
+---
+
+## Local Development
+
+```bash
+# SQLite mode (default — no DATABASE_URL needed)
+python main_bot.py
+
+# Check DB contents
+python -c "from storage import database as db; db.init_db(); print(db.list_monitors())"
+
+# Seed presets manually
+python -c "from config_loader import seed_system_presets; seed_system_presets()"
+```
+
+---
+
+## Version History
+
+| Version | Description |
 |---------|-------------|
-| v5.1 | Cloud MVP: Railway + Telegram + Google Drive + Postgres |
-| v5.0 | Multi-Monitor System: SQLite, monitors.yaml, APScheduler |
-| v4.1 | pain_signal, analysis_priority, content_type, text_status |
-| v4.0 | Subreddit presets, keyword presets, 4 run modes |
-| v3.0 | selftext, comment_match_type, min_comment_length |
-| v2.0 | Playwright scraping (no API keys needed) |
-| v1.0 | MVP with PRAW (required Reddit API keys) |
+| v5.2 | Universal multi-user system: user-created projects/monitors, manual-first scheduling, per-user Drive isolation |
+| v5.1 | Cloud MVP: Railway + Telegram bot + Google Drive + Postgres |
+| v5.0 | Multi-Monitor Trend Intelligence System (local) |
+| v4.1 | Reddit Parser with quality scoring, AI handoff JSON |
+| v4.0 | Multi-subreddit parser with Playwright |
