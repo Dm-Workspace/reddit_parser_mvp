@@ -1,6 +1,10 @@
 ﻿.env
 exports/*
 !exports/.gitkeep
+data/*
+!data/.gitkeep
+handoff/*
+!handoff/.gitkeep
 *.log
 __pycache__/
 *.pyc

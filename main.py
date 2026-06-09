@@ -1,129 +1,53 @@
 #!/usr/bin/env python3
-"""Reddit Parser MVP — collect posts and comments from Reddit."""
+"""
+Multi-Monitor Trend Intelligence System v5
+CLI entry point.
 
+Subcommands:
+  parse          — direct parse (v4 mode, no DB)
+  run-monitor    — run a single monitor from monitors.yaml
+  run-all        — run all enabled monitors
+  list-monitors  — show monitors from monitors.yaml
+  list-runs      — show recent runs from DB
+  scheduler      — start APScheduler daemon
+"""
 import argparse
 import sys
 import os
 
 from loguru import logger
-
 from utils.logger import setup_logger
-from config import (
-    SUPPORTED_PERIODS, SUPPORTED_SORTS, SUPPORTED_EXPORTS,
-    SUPPORTED_LANGUAGE_MODES, RUN_MODES, KEYWORD_PRESETS, SUBREDDIT_PRESETS,
-    SMALL_DATASET_WARNING,
-)
-from reddit_client import create_reddit_client, close_reddit_client
-from reddit_parser import parse_subreddits
-from utils.deduplication import deduplicate_posts, deduplicate_comments
-from utils.date_utils import now_utc_str, now_file_str
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Reddit Parser MVP",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Subreddit presets:   wellness_en, wellness_gut, wellness_women, wellness_energy, crm_en, ai_en, ru_uk_mixed
-Keyword presets:     wellness_en, wellness_ru, wellness_uk, crm_en, ai_en
-Run modes:           hot_last_7d, top_week, top_month, rising_24h
+# ─── Subcommand handlers ──────────────────────────────────────────────────────
 
-Examples:
-  python main.py --subreddit-preset wellness_en --keyword-preset wellness_en --run-mode hot_last_7d --export xlsx
-  python main.py --subreddit-preset wellness_en --run-mode top_week --export xlsx
-  python main.py --subreddits nutrition,Supplements --keywords magnesium,gut --export xlsx
-  python main.py --subreddit-preset wellness_gut --run-mode rising_24h --language-mode en --export csv
-        """,
+def cmd_parse(args) -> None:
+    """Legacy direct parse mode — no DB, no monitor config."""
+    from config import (
+        SUPPORTED_PERIODS, SUPPORTED_SORTS, SUPPORTED_EXPORTS,
+        SUPPORTED_LANGUAGE_MODES, RUN_MODES, KEYWORD_PRESETS,
+        SUBREDDIT_PRESETS, SMALL_DATASET_WARNING, EXPORTS_DIR,
     )
-
-    # Source
-    src = parser.add_mutually_exclusive_group(required=True)
-    src.add_argument("--subreddits", help="Comma-separated subreddits")
-    src.add_argument("--subreddit-preset", dest="subreddit_preset",
-                     choices=list(SUBREDDIT_PRESETS.keys()),
-                     help="Use a built-in subreddit list")
-
-    # Keywords
-    kw = parser.add_mutually_exclusive_group()
-    kw.add_argument("--keywords", default="", help="Comma-separated keywords")
-    kw.add_argument("--keyword-preset", dest="keyword_preset",
-                    choices=list(KEYWORD_PRESETS.keys()),
-                    help="Use a built-in keyword set")
-
-    # Sort / period / run mode
-    parser.add_argument("--period", default="last_7d", choices=SUPPORTED_PERIODS)
-    parser.add_argument("--sort", default="hot", choices=SUPPORTED_SORTS)
-    parser.add_argument("--run-mode", dest="run_mode", default=None,
-                        choices=list(RUN_MODES.keys()),
-                        help="Preset that sets sort, period, limits, thresholds")
-
-    # Limits (can be overridden even when run-mode is set)
-    parser.add_argument("--limit", type=int, default=None,
-                        help="Max posts per subreddit (run-mode default if omitted)")
-    parser.add_argument("--comments", type=int, default=None,
-                        help="Max comments per post (run-mode default if omitted)")
-    parser.add_argument("--min-score", type=int, default=None, dest="min_score",
-                        help="Minimum post score (run-mode default if omitted)")
-    parser.add_argument("--min-comments", type=int, default=None, dest="min_comments",
-                        help="Minimum post comment count (run-mode default if omitted)")
-    parser.add_argument("--min-comment-length", type=int, default=40, dest="min_comment_length",
-                        help="Min comment body length in chars (default: 40; bypassed if score > 10)")
-
-    # Filters
-    parser.add_argument("--language-mode", default="mixed",
-                        choices=SUPPORTED_LANGUAGE_MODES, dest="language_mode")
-    parser.add_argument("--no-bots", action="store_true", dest="no_bots",
-                        help="Keep bot comments (they are filtered by default)")
-    parser.add_argument("--no-selftext", action="store_true", dest="no_selftext",
-                        help="Skip fetching post body (faster)")
-
-    # Export
-    parser.add_argument("--export", default="xlsx", choices=SUPPORTED_EXPORTS)
-    parser.add_argument("--output", default=None,
-                        help="Output filename without extension")
-    parser.add_argument("--verbose", action="store_true")
-
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    setup_logger("DEBUG" if args.verbose else "INFO")
+    from reddit_client import create_reddit_client, close_reddit_client
+    from reddit_parser import parse_subreddits
+    from utils.deduplication import deduplicate_posts, deduplicate_comments
+    from utils.date_utils import now_utc_str, now_file_str
 
     # Resolve subreddits
     if args.subreddit_preset:
         subreddits = SUBREDDIT_PRESETS[args.subreddit_preset]
-        logger.info(f"Subreddit preset '{args.subreddit_preset}': {len(subreddits)} subreddits")
     else:
         subreddits = [s.strip() for s in args.subreddits.split(",") if s.strip()]
 
     # Resolve keywords
     if args.keyword_preset:
         keywords = KEYWORD_PRESETS[args.keyword_preset]
-        logger.info(f"Keyword preset '{args.keyword_preset}': {len(keywords)} keywords")
     elif args.keywords:
         keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
     else:
         keywords = []
 
-    # Auto language_mode: en-suffix presets default to en unless user explicitly set mixed
-    EN_PRESETS = {"wellness_en", "crm_en", "ai_en"}
-    RU_PRESETS = {"wellness_ru"}
-    UK_PRESETS = {"wellness_uk"}
-    effective_language_mode = args.language_mode
-    if effective_language_mode == "mixed":  # user did not explicitly override
-        kp = args.keyword_preset or ""
-        if kp in EN_PRESETS:
-            effective_language_mode = "en"
-            logger.info("Auto language_mode=en (keyword preset is English)")
-        elif kp in RU_PRESETS:
-            effective_language_mode = "ru"
-            logger.info("Auto language_mode=ru (keyword preset is Russian)")
-        elif kp in UK_PRESETS:
-            effective_language_mode = "uk"
-            logger.info("Auto language_mode=uk (keyword preset is Ukrainian)")
-
-    # Resolve run mode defaults, then apply CLI overrides
+    # Resolve run mode
     if args.run_mode:
         mode = RUN_MODES[args.run_mode]
         sort = mode["sort"]
@@ -140,19 +64,30 @@ def main() -> None:
         min_score = args.min_score if args.min_score is not None else 5
         min_comments_count = args.min_comments if args.min_comments is not None else 10
 
+    # Auto language mode
+    EN_PRESETS = {"wellness_en", "crm_en", "ai_en"}
+    RU_PRESETS = {"wellness_ru"}
+    UK_PRESETS = {"wellness_uk"}
+    effective_language_mode = args.language_mode
+    if effective_language_mode == "mixed":
+        kp = args.keyword_preset or ""
+        if kp in EN_PRESETS:
+            effective_language_mode = "en"
+        elif kp in RU_PRESETS:
+            effective_language_mode = "ru"
+        elif kp in UK_PRESETS:
+            effective_language_mode = "uk"
+
     filter_bots = not args.no_bots
     fetch_selftext = not args.no_selftext
 
     logger.info("=" * 64)
-    logger.info("Reddit Parser MVP")
-    logger.info(f"Subreddits     : {subreddits}")
-    logger.info(f"Keywords       : {keywords[:5]}{'...' if len(keywords) > 5 else ''}" if keywords else "Keywords       : (all posts)")
-    logger.info(f"Period         : {period}   Sort: {sort}   Mode: {args.run_mode or '—'}")
-    logger.info(f"Limit          : {limit}/sub   Comments: {max_comments}/post")
-    logger.info(f"Min score      : {min_score}   Min comments: {min_comments_count}")
-    logger.info(f"Min cmnt len   : {args.min_comment_length} chars")
-    logger.info(f"Language       : {effective_language_mode}   Bots: {'filtered' if filter_bots else 'kept'}")
-    logger.info(f"Fetch body     : {fetch_selftext}   Export: {args.export}")
+    logger.info("Reddit Parser — parse mode")
+    logger.info(f"Subreddits : {subreddits}")
+    logger.info(f"Keywords   : {keywords[:5]}..." if len(keywords) > 5 else f"Keywords   : {keywords or '(all)'}")
+    logger.info(f"Period: {period}  Sort: {sort}  Mode: {args.run_mode or '—'}")
+    logger.info(f"Limit: {limit}/sub  Comments: {max_comments}/post")
+    logger.info(f"Min score: {min_score}  Min comments: {min_comments_count}  Lang: {effective_language_mode}")
     logger.info("=" * 64)
 
     run_settings = {
@@ -161,17 +96,14 @@ def main() -> None:
         "subreddit_preset": args.subreddit_preset or "—",
         "keywords": ", ".join(keywords) if keywords else "all",
         "keyword_preset": args.keyword_preset or "—",
-        "period": period,
-        "sort": sort,
+        "period": period, "sort": sort,
         "run_mode": args.run_mode or "—",
         "limit_per_subreddit": limit,
         "max_comments_per_post": max_comments,
-        "min_score": min_score,
-        "min_comments": min_comments_count,
+        "min_score": min_score, "min_comments": min_comments_count,
         "min_comment_length": args.min_comment_length,
         "language_mode": effective_language_mode,
-        "filter_bots": filter_bots,
-        "fetch_selftext": fetch_selftext,
+        "filter_bots": filter_bots, "fetch_selftext": fetch_selftext,
         "export_format": args.export,
     }
 
@@ -183,52 +115,35 @@ def main() -> None:
 
     try:
         posts, comments = parse_subreddits(
-            reddit=reddit,
-            subreddits=subreddits,
-            keywords=keywords,
-            period=period,
-            sort=sort,
-            limit=limit,
-            max_comments=max_comments,
-            min_score=min_score,
-            min_comments=min_comments_count,
-            fetch_selftext=fetch_selftext,
-            filter_bots=filter_bots,
+            reddit=reddit, subreddits=subreddits, keywords=keywords,
+            period=period, sort=sort, limit=limit, max_comments=max_comments,
+            min_score=min_score, min_comments=min_comments_count,
+            fetch_selftext=fetch_selftext, filter_bots=filter_bots,
             language_mode=effective_language_mode,
             min_comment_length=args.min_comment_length,
         )
-
         posts_before = len(posts)
         posts = deduplicate_posts(posts)
         comments = deduplicate_comments(comments)
-        dupes_removed = posts_before - len(posts)
-
-        logger.info(f"Posts: {len(posts)} | Comments: {len(comments)} | Dupes removed: {dupes_removed}")
+        dupes = posts_before - len(posts)
+        logger.info(f"Posts: {len(posts)} | Comments: {len(comments)} | Dupes removed: {dupes}")
 
         if len(posts) < 20:
-            logger.warning(f"Only {len(posts)} posts collected. " + SMALL_DATASET_WARNING)
-        if len(comments) < 100:
-            logger.warning(f"Only {len(comments)} comments collected. " + SMALL_DATASET_WARNING)
+            logger.warning(SMALL_DATASET_WARNING)
 
         ts = now_file_str()
         output_name = args.output or f"reddit_{ts}"
-
-        from config import EXPORTS_DIR
         os.makedirs(EXPORTS_DIR, exist_ok=True)
 
         if args.export == "xlsx":
             from exporters.excel_exporter import export_excel
             out = os.path.join(EXPORTS_DIR, f"{output_name}.xlsx") if args.output else None
-            result = export_excel(posts, comments, run_settings, out, dupes_removed, subreddits)
+            result = export_excel(posts, comments, run_settings, out, dupes, subreddits)
             logger.info(f"Output: {result}")
-
         elif args.export == "csv":
             from exporters.csv_exporter import export_csv
-            prefix = output_name if args.output else f"reddit_{ts}"
-            p, c = export_csv(posts, comments, prefix)
-            logger.info(f"Posts   : {p}")
-            logger.info(f"Comments: {c}")
-
+            p, c = export_csv(posts, comments, output_name if args.output else f"reddit_{ts}")
+            logger.info(f"Posts: {p}  Comments: {c}")
         elif args.export == "json":
             from exporters.json_exporter import export_json
             out = os.path.join(EXPORTS_DIR, f"{output_name}.json") if args.output else None
@@ -238,9 +153,162 @@ def main() -> None:
         logger.info("=" * 64)
         logger.info(f"Done! {len(posts)} posts, {len(comments)} comments.")
         logger.info("=" * 64)
-
     finally:
         close_reddit_client(reddit)
+
+
+def cmd_run_monitor(args) -> None:
+    from config_loader import sync_to_db
+    sync_to_db()
+    from monitor_runner import run_monitor
+    run = run_monitor(args.monitor_id)
+    if run:
+        logger.info(f"Run finished: {run.status} | Posts: {run.total_posts} | Comments: {run.total_comments}")
+        if run.export_path:
+            logger.info(f"Files in: {run.export_path}")
+
+
+def cmd_run_all(args) -> None:
+    from config_loader import get_all_monitors
+    from monitor_runner import run_monitor
+    monitors = get_all_monitors(enabled_only=True)
+    if not monitors:
+        logger.warning("No enabled monitors found")
+        return
+    logger.info(f"Running {len(monitors)} enabled monitors...")
+    for monitor in monitors:
+        logger.info(f"─── Monitor: {monitor.name} ({monitor.id}) ───")
+        run_monitor(monitor.id)
+
+
+def cmd_list_monitors(args) -> None:
+    from config_loader import get_all_monitors
+    monitors = get_all_monitors(enabled_only=False)
+    if not monitors:
+        logger.info("No monitors found. Check monitors.yaml")
+        return
+    print(f"\n{'ID':<20} {'PROJECT':<18} {'MODE':<14} {'CRON':<20} {'EN':>3}")
+    print("─" * 80)
+    for m in monitors:
+        enabled = "✓" if m.enabled else "✗"
+        print(f"{m.id:<20} {m.project_id:<18} {m.run_mode:<14} {m.schedule_cron:<20} {enabled:>3}")
+    print()
+
+
+def cmd_list_runs(args) -> None:
+    from config_loader import sync_to_db
+    sync_to_db()
+    from storage import database as db
+    runs = db.list_runs(limit=args.limit)
+    if not runs:
+        logger.info("No runs found yet. Use 'run-monitor' to start one.")
+        return
+    print(f"\n{'RUN ID':<14} {'MONITOR':<20} {'STATUS':<24} {'POSTS':>6} {'CMTS':>6}  STARTED")
+    print("─" * 90)
+    for r in runs:
+        print(f"{r.id:<14} {r.monitor_id:<20} {r.status:<24} {r.total_posts:>6} {r.total_comments:>6}  {r.started_at}")
+    print()
+
+
+def cmd_scheduler(args) -> None:
+    from scheduler_runner import start_scheduler
+    start_scheduler()
+
+
+# ─── Argument parser ──────────────────────────────────────────────────────────
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="main.py",
+        description="Multi-Monitor Trend Intelligence System v5",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Commands:
+  parse          Direct parse (no DB). Old v4 mode.
+  run-monitor    Run one monitor from monitors.yaml
+  run-all        Run all enabled monitors
+  list-monitors  Show all monitors
+  list-runs      Show recent run history
+  scheduler      Start cron scheduler daemon
+
+Examples:
+  python main.py parse --subreddit-preset wellness_en --keyword-preset wellness_en --run-mode hot_last_7d --export xlsx
+  python main.py run-monitor --monitor-id wellness_hot
+  python main.py run-all
+  python main.py list-monitors
+  python main.py list-runs --limit 50
+  python main.py scheduler
+        """,
+    )
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    sub = parser.add_subparsers(dest="command")
+
+    # ── parse (legacy mode) ──────────────────────────────────────────────────
+    p_parse = sub.add_parser("parse", help="Direct parse without DB (v4 mode)")
+    src = p_parse.add_mutually_exclusive_group(required=True)
+    src.add_argument("--subreddits")
+    src.add_argument("--subreddit-preset", dest="subreddit_preset",
+                     choices=["wellness_en","wellness_gut","wellness_women","wellness_energy","crm_en","ai_en","ru_uk_mixed"])
+    kw = p_parse.add_mutually_exclusive_group()
+    kw.add_argument("--keywords", default="")
+    kw.add_argument("--keyword-preset", dest="keyword_preset",
+                    choices=["wellness_en","wellness_ru","wellness_uk","crm_en","ai_en"])
+    p_parse.add_argument("--period", default="last_7d",
+                         choices=["last_24h","last_7d","last_30d","all"])
+    p_parse.add_argument("--sort", default="hot",
+                         choices=["hot","new","top","rising","controversial"])
+    p_parse.add_argument("--run-mode", dest="run_mode", default=None,
+                         choices=["hot_last_7d","top_week","top_month","rising_24h"])
+    p_parse.add_argument("--limit", type=int, default=None)
+    p_parse.add_argument("--comments", type=int, default=None)
+    p_parse.add_argument("--min-score", type=int, default=None, dest="min_score")
+    p_parse.add_argument("--min-comments", type=int, default=None, dest="min_comments")
+    p_parse.add_argument("--min-comment-length", type=int, default=40, dest="min_comment_length")
+    p_parse.add_argument("--language-mode", default="mixed",
+                         choices=["en","ru","uk","mixed"], dest="language_mode")
+    p_parse.add_argument("--no-bots", action="store_true", dest="no_bots")
+    p_parse.add_argument("--no-selftext", action="store_true", dest="no_selftext")
+    p_parse.add_argument("--export", default="xlsx", choices=["xlsx","csv","json"])
+    p_parse.add_argument("--output", default=None)
+
+    # ── run-monitor ──────────────────────────────────────────────────────────
+    p_run = sub.add_parser("run-monitor", help="Run a single monitor")
+    p_run.add_argument("--monitor-id", required=True, dest="monitor_id")
+
+    # ── run-all ──────────────────────────────────────────────────────────────
+    sub.add_parser("run-all", help="Run all enabled monitors")
+
+    # ── list-monitors ────────────────────────────────────────────────────────
+    sub.add_parser("list-monitors", help="List monitors from monitors.yaml")
+
+    # ── list-runs ────────────────────────────────────────────────────────────
+    p_runs = sub.add_parser("list-runs", help="Show recent run history")
+    p_runs.add_argument("--limit", type=int, default=20)
+
+    # ── scheduler ────────────────────────────────────────────────────────────
+    sub.add_parser("scheduler", help="Start APScheduler daemon")
+
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    setup_logger("DEBUG" if args.verbose else "INFO")
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(0)
+
+    dispatch = {
+        "parse": cmd_parse,
+        "run-monitor": cmd_run_monitor,
+        "run-all": cmd_run_all,
+        "list-monitors": cmd_list_monitors,
+        "list-runs": cmd_list_runs,
+        "scheduler": cmd_scheduler,
+    }
+    dispatch[args.command](args)
 
 
 if __name__ == "__main__":

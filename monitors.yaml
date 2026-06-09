@@ -1,0 +1,73 @@
+projects:
+  - id: energy_reboot
+    name: Energy Reboot
+    description: "Women wellness market — fatigue, gut, hormones, supplements"
+    language: en
+    market: women wellness
+    default_output_language: ru
+    enabled: true
+
+  - id: up_level
+    name: Up Level
+    description: "CRM, automation, SaaS tools for entrepreneurs"
+    language: en
+    market: crm saas
+    default_output_language: ru
+    enabled: true
+
+monitors:
+  - id: wellness_hot
+    project_id: energy_reboot
+    name: Wellness Hot Last 7 Days
+    source: reddit
+    subreddit_preset: wellness_en
+    keyword_preset: wellness_en
+    run_mode: hot_last_7d
+    schedule_cron: "0 8 * * *"
+    timezone: "Europe/Podgorica"
+    enabled: true
+    export_formats:
+      - xlsx
+      - json
+
+  - id: wellness_rising
+    project_id: energy_reboot
+    name: Wellness Rising 24h
+    source: reddit
+    subreddit_preset: wellness_en
+    keyword_preset: wellness_en
+    run_mode: rising_24h
+    schedule_cron: "0 9 * * *"
+    timezone: "Europe/Podgorica"
+    enabled: true
+    export_formats:
+      - xlsx
+      - json
+
+  - id: wellness_monthly
+    project_id: energy_reboot
+    name: Wellness Top Month
+    source: reddit
+    subreddit_preset: wellness_en
+    keyword_preset: wellness_en
+    run_mode: top_month
+    schedule_cron: "0 10 1 * *"
+    timezone: "Europe/Podgorica"
+    enabled: true
+    export_formats:
+      - xlsx
+      - json
+
+  - id: up_level_crm
+    project_id: up_level
+    name: CRM and Automation Trends
+    source: reddit
+    subreddit_preset: crm_en
+    keyword_preset: crm_en
+    run_mode: hot_last_7d
+    schedule_cron: "0 10 * * MON,WED,FRI"
+    timezone: "Europe/Podgorica"
+    enabled: true
+    export_formats:
+      - xlsx
+      - json
