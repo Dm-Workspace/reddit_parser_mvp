@@ -22,7 +22,8 @@ from loguru import logger
 
 from bot.auth import admin_only, get_uid
 from bot.keyboards import (
-    preset_list, run_mode_choice, schedule_frequency,
+    preset_list, run_mode_choice,
+    monitor_schedule_choice, monitor_cancel_confirm,
     cancel_button, skip_cancel, after_monitor_created, retry_project_id,
 )
 from bot.states import (
@@ -272,158 +273,17 @@ async def _ask_run_mode(update: Update, context):
     return CM_RUN_MODE
 
 
-# ── Step 5: Run mode ───────────────────────────────────────────────────────────
+# ── Shared: build Monitor from draft and save to DB ────────────────────────────
 
-async def handle_run_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    mode = query.data.split(":")[1]  # runmode:hot_last_7d → hot_last_7d
-    _draft(context)["run_mode"] = mode
-    await query.edit_message_text(
-        "Шаг 6/7: <b>Расписание</b> запусков:",
-        parse_mode="HTML",
-        reply_markup=schedule_frequency(),
-    )
-    return CM_SCHEDULE
-
-
-# ── Step 6: Schedule ───────────────────────────────────────────────────────────
-
-async def handle_schedule_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    choice = query.data.split(":")[1]  # sch:manual → manual
-
-    from bot.schedule_utils import frequency_label, compute_next_run_at
-    draft = _draft(context)
-
-    if choice == "manual":
-        draft["schedule_mode"]  = "manual"
-        draft["frequency"]      = "none"
-        draft["schedule_cron"]  = ""
-        draft["next_run_at"]    = None
-    elif choice == "disabled":
-        draft["schedule_mode"]  = "disabled"
-        draft["frequency"]      = "none"
-        draft["schedule_cron"]  = ""
-        draft["next_run_at"]    = None
-    elif choice == "biweekly":
-        draft["schedule_mode"]  = "scheduled"
-        draft["frequency"]      = "biweekly"
-        draft["schedule_cron"]  = ""
-        draft["next_run_at"]    = compute_next_run_at("biweekly", "", "UTC")
-    elif choice in ("weekly", "monthly"):
-        draft["_pending_schedule"] = choice
-        if choice == "weekly":
-            from bot.keyboards import schedule_weekday
-            await query.edit_message_text(
-                "Выберите <b>день недели</b>:",
-                parse_mode="HTML",
-                reply_markup=schedule_weekday(),
-            )
-        else:
-            from bot.keyboards import schedule_day_of_month
-            await query.edit_message_text(
-                "Выберите <b>день месяца</b> (1–28):",
-                parse_mode="HTML",
-                reply_markup=schedule_day_of_month(),
-            )
-        return CM_SCHEDULE   # stay in schedule state, waiting for day selection
-
-    # Jump to confirmation
-    return await _show_confirm(update, context)
-
-
-async def handle_schedule_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle weekday or day-of-month selection."""
-    query = update.callback_query
-    await query.answer()
-    draft = _draft(context)
-    pending = draft.get("_pending_schedule", "weekly")
-
-    data = query.data   # sch_day:0 or sch_dom:15
-    day = int(data.split(":")[1])
-    draft["_schedule_day"] = day
-
-    await query.edit_message_text(
-        "Введите <b>время запуска</b> в формате HH:MM (UTC):\n"
-        "<i>Например: 08:00</i>",
-        parse_mode="HTML",
-        reply_markup=cancel_button(),
-    )
-    return CM_SCHEDULE
-
-
-async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle time input for weekly/monthly schedule."""
-    from bot.schedule_utils import parse_time, build_weekly_cron, build_monthly_cron, compute_next_run_at
-    draft = _draft(context)
-    pending = draft.get("_pending_schedule", "weekly")
-
-    try:
-        hour, minute = parse_time(update.message.text)
-    except ValueError as e:
-        await update.message.reply_text(f"❌ {e}:")
-        return CM_SCHEDULE
-
-    day = draft.get("_schedule_day", 1)
-    if pending == "weekly":
-        cron = build_weekly_cron(day, hour, minute)
-    else:
-        cron = build_monthly_cron(day, hour, minute)
-
-    draft["schedule_mode"] = "scheduled"
-    draft["frequency"]     = pending
-    draft["schedule_cron"] = cron
-    draft["next_run_at"]   = compute_next_run_at(pending, cron, "UTC")
-    draft.pop("_pending_schedule", None)
-    draft.pop("_schedule_day", None)
-
-    return await _show_confirm(update, context)
-
-
-# ── Step 7: Confirm ────────────────────────────────────────────────────────────
-
-async def _show_confirm(update: Update, context):
+async def _create_monitor_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """
+    Create monitor from current draft, persist to DB, show success message.
+    Returns monitor_id. Always uses update.effective_message for the reply.
+    Draft is cleared after creation.
+    """
     from bot.schedule_utils import frequency_label
     draft = _draft(context)
-
-    # Resolve preset names for display
-    sr_label = draft.get("subreddit_preset_id") or "custom"
-    kw_label = draft.get("keyword_preset_id") or "custom"
-    sr_custom = json.loads(draft.get("custom_subreddits", "[]"))
-    kw_custom = json.loads(draft.get("custom_keywords", "[]"))
-    if sr_custom:
-        sr_label = f"custom ({len(sr_custom)} subs)"
-    if kw_custom:
-        kw_label = f"custom ({len(kw_custom)} kws)"
-
-    sched_label = frequency_label(draft.get("frequency", "none"), draft.get("schedule_cron", ""))
-    next_run = draft.get("next_run_at") or "—"
-
-    summary = (
-        f"<b>Подтвердите создание монитора:</b>\n\n"
-        f"📡 <b>Название:</b> {draft.get('name')}\n"
-        f"📁 <b>Проект:</b> {draft.get('project_name')}\n"
-        f"🌐 <b>Сабреддиты:</b> {sr_label}\n"
-        f"🔑 <b>Ключевые слова:</b> {kw_label}\n"
-        f"⚙️ <b>Режим:</b> {draft.get('run_mode')}\n"
-        f"🕒 <b>Расписание:</b> {sched_label}\n"
-        f"📅 <b>Следующий запуск:</b> {next_run[:16] if next_run != '—' else '—'}\n"
-    )
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Создать",  callback_data="mon_confirm:yes"),
-        InlineKeyboardButton("❌ Отмена",   callback_data="cancel_conv"),
-    ]])
-    await update.effective_message.reply_text(summary, parse_mode="HTML", reply_markup=kb)
-    return CM_CONFIRM
-
-
-async def handle_monitor_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    draft = _draft(context)
-    uid = get_uid(update)
+    uid   = get_uid(update)
 
     monitor_id = _make_monitor_id(draft["name"])
     monitor = Monitor(
@@ -452,26 +312,311 @@ async def handle_monitor_confirm(update: Update, context: ContextTypes.DEFAULT_T
     _clear(context)
     logger.info(f"Monitor created: {monitor_id} in project {monitor.project_id} by user {uid}")
 
-    await query.edit_message_text(
+    # Resolve labels for success message
+    sr_label  = draft.get("subreddit_preset_id") or "custom"
+    kw_label  = draft.get("keyword_preset_id") or "custom"
+    sr_custom = json.loads(draft.get("custom_subreddits", "[]"))
+    kw_custom = json.loads(draft.get("custom_keywords", "[]"))
+    if sr_custom:
+        sr_label = f"custom ({len(sr_custom)} sub)"
+    if kw_custom:
+        kw_label = f"custom ({len(kw_custom)} kw)"
+    sched_label = frequency_label(monitor.frequency, monitor.schedule_cron)
+
+    text = (
         f"✅ <b>Монитор создан!</b>\n\n"
         f"📡 <b>{monitor.name}</b>\n"
-        f"🆔 <code>{monitor_id}</code>\n"
-        f"📁 Проект: <b>{monitor.project_id}</b>",
+        f"📁 Проект: <b>{monitor.project_id}</b>\n"
+        f"🌐 Источник: Reddit\n"
+        f"📂 Сабреддиты: {sr_label}\n"
+        f"🔑 Ключевые слова: {kw_label}\n"
+        f"⚙️ Режим: {monitor.run_mode}\n"
+        f"🕒 Расписание: {sched_label}\n\n"
+        f"<b>Что дальше?</b>"
+    )
+    await update.effective_message.reply_text(
+        text,
         parse_mode="HTML",
         reply_markup=after_monitor_created(monitor_id, monitor.project_id),
     )
+    return monitor_id
+
+
+# ── Step 5: Run mode ───────────────────────────────────────────────────────────
+
+async def handle_run_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    mode = query.data.split(":")[1]  # runmode:hot_last_7d → hot_last_7d
+    _draft(context)["run_mode"] = mode
+    await query.edit_message_text(
+        "Шаг 6/6: <b>Расписание</b> запусков:\n\n"
+        "<i>Выберите 'Только вручную' — монитор будет создан и запускается по кнопке.\n"
+        "Или настройте автоматический запуск.</i>",
+        parse_mode="HTML",
+        reply_markup=monitor_schedule_choice(),
+    )
+    return CM_SCHEDULE
+
+
+# ── Step 6: Schedule — main dispatcher (mon_sch:*) ────────────────────────────
+
+async def handle_schedule_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles mon_sch:* callbacks on the schedule step."""
+    query = update.callback_query
+    await query.answer()
+    choice = query.data.split(":")[1]   # mon_sch:manual → manual
+
+    from bot.schedule_utils import compute_next_run_at
+    draft = _draft(context)
+
+    # ── Manual: create monitor immediately, no extra confirm step ─────────────
+    if choice == "manual":
+        draft["schedule_mode"] = "manual"
+        draft["frequency"]     = "none"
+        draft["schedule_cron"] = ""
+        draft["next_run_at"]   = None
+        await _create_monitor_now(update, context)
+        return ConversationHandler.END
+
+    # ── Biweekly: set schedule, show confirm ──────────────────────────────────
+    if choice == "biweekly":
+        draft["schedule_mode"] = "scheduled"
+        draft["frequency"]     = "biweekly"
+        draft["schedule_cron"] = ""
+        draft["next_run_at"]   = compute_next_run_at("biweekly", "", "UTC")
+        return await _show_confirm(update, context)
+
+    # ── Weekly / Monthly: ask for day ─────────────────────────────────────────
+    if choice in ("weekly", "monthly"):
+        draft["_pending_schedule"] = choice
+        if choice == "weekly":
+            from bot.keyboards import schedule_weekday
+            await query.edit_message_text(
+                "Выберите <b>день недели</b>:",
+                parse_mode="HTML",
+                reply_markup=schedule_weekday(),
+            )
+        else:
+            from bot.keyboards import schedule_day_of_month
+            await query.edit_message_text(
+                "Выберите <b>день месяца</b> (1–28):",
+                parse_mode="HTML",
+                reply_markup=schedule_day_of_month(),
+            )
+        return CM_SCHEDULE   # stay, wait for day selection
+
+    # ── Back: return to run mode step ─────────────────────────────────────────
+    if choice == "back":
+        draft.pop("run_mode", None)
+        await query.edit_message_text(
+            "Шаг 5/6: Выберите <b>режим запуска</b>:",
+            parse_mode="HTML",
+            reply_markup=run_mode_choice(),
+        )
+        return CM_RUN_MODE
+
+    # ── Cancel: ask for confirmation ──────────────────────────────────────────
+    if choice == "cancel_full":
+        await query.edit_message_text(
+            "🛑 <b>Отменить создание монитора?</b>\n\n"
+            "Вы уже заполнили несколько шагов.\n"
+            "Все введённые данные будут потеряны.",
+            parse_mode="HTML",
+            reply_markup=monitor_cancel_confirm(),
+        )
+        return CM_SCHEDULE   # stay — awaiting mon_cancel:confirm or mon_cancel:back
+
+    return CM_SCHEDULE
+
+
+# ── Step 6: Schedule — day/time for weekly/monthly ────────────────────────────
+
+async def handle_schedule_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle weekday or day-of-month selection."""
+    query = update.callback_query
+    await query.answer()
+    draft = _draft(context)
+
+    data = query.data   # sch_day:0 or sch_dom:15
+    day = int(data.split(":")[1])
+    draft["_schedule_day"] = day
+
+    await query.edit_message_text(
+        "Введите <b>время запуска</b> в формате HH:MM (UTC):\n"
+        "<i>Например: 08:00</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад",         callback_data="mon_sch:back_day"),
+            InlineKeyboardButton("🛑 Отменить",      callback_data="mon_sch:cancel_full"),
+        ]]),
+    )
+    return CM_SCHEDULE
+
+
+async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle time input for weekly/monthly schedule."""
+    from bot.schedule_utils import parse_time, build_weekly_cron, build_monthly_cron, compute_next_run_at
+    draft = _draft(context)
+    pending = draft.get("_pending_schedule", "weekly")
+
+    try:
+        hour, minute = parse_time(update.message.text)
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ {e}\n<i>Введите время в формате HH:MM, например: 08:00</i>",
+            parse_mode="HTML",
+        )
+        return CM_SCHEDULE
+
+    day = draft.get("_schedule_day", 1)
+    if pending == "weekly":
+        cron = build_weekly_cron(day, hour, minute)
+    else:
+        cron = build_monthly_cron(day, hour, minute)
+
+    draft["schedule_mode"] = "scheduled"
+    draft["frequency"]     = pending
+    draft["schedule_cron"] = cron
+    draft["next_run_at"]   = compute_next_run_at(pending, cron, "UTC")
+    draft.pop("_pending_schedule", None)
+    draft.pop("_schedule_day", None)
+
+    return await _show_confirm(update, context)
+
+
+# ── Step 6: Cancel confirmation callbacks ─────────────────────────────────────
+
+async def handle_cancel_confirm_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handles mon_cancel:confirm and mon_cancel:back.
+    Also handles mon_sch:back_day (back from day-of-week/month to schedule choice).
+    """
+    query = update.callback_query
+    await query.answer()
+    action = query.data.split(":")[1]   # mon_cancel:confirm → confirm
+
+    if action == "confirm":
+        _clear(context)
+        await query.edit_message_text(
+            "❌ Создание монитора отменено.\n\n"
+            "Вернитесь в меню: /menu",
+        )
+        return ConversationHandler.END
+
+    if action == "back":
+        # Back from cancel-confirmation to schedule choice
+        await query.edit_message_text(
+            "Шаг 6/6: <b>Расписание</b> запусков:",
+            parse_mode="HTML",
+            reply_markup=monitor_schedule_choice(),
+        )
+        return CM_SCHEDULE
+
+    return CM_SCHEDULE
+
+
+async def handle_schedule_back_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Back from day-input to schedule choice."""
+    query = update.callback_query
+    await query.answer()
+    draft = _draft(context)
+    draft.pop("_pending_schedule", None)
+    draft.pop("_schedule_day", None)
+    await query.edit_message_text(
+        "Шаг 6/6: <b>Расписание</b> запусков:",
+        parse_mode="HTML",
+        reply_markup=monitor_schedule_choice(),
+    )
+    return CM_SCHEDULE
+
+
+# ── Step 7: Confirm (for scheduled monitors) ──────────────────────────────────
+
+async def _show_confirm(update: Update, context):
+    from bot.schedule_utils import frequency_label
+    draft = _draft(context)
+
+    sr_label  = draft.get("subreddit_preset_id") or "custom"
+    kw_label  = draft.get("keyword_preset_id") or "custom"
+    sr_custom = json.loads(draft.get("custom_subreddits", "[]"))
+    kw_custom = json.loads(draft.get("custom_keywords", "[]"))
+    if sr_custom:
+        sr_label = f"custom ({len(sr_custom)} sub)"
+    if kw_custom:
+        kw_label = f"custom ({len(kw_custom)} kw)"
+
+    sched_label = frequency_label(draft.get("frequency", "none"), draft.get("schedule_cron", ""))
+    next_run    = draft.get("next_run_at") or "—"
+
+    summary = (
+        f"<b>Подтвердите создание монитора:</b>\n\n"
+        f"📡 <b>Название:</b> {draft.get('name')}\n"
+        f"📁 <b>Проект:</b> {draft.get('project_name')}\n"
+        f"🌐 <b>Сабреддиты:</b> {sr_label}\n"
+        f"🔑 <b>Ключевые слова:</b> {kw_label}\n"
+        f"⚙️ <b>Режим:</b> {draft.get('run_mode')}\n"
+        f"🕒 <b>Расписание:</b> {sched_label}\n"
+        f"📅 <b>Следующий запуск:</b> {next_run[:16] if next_run != '—' else '—'}\n"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Создать",          callback_data="mon_confirm:yes")],
+        [InlineKeyboardButton("⬅️ Назад к расписанию", callback_data="mon_confirm:back_sched")],
+        [InlineKeyboardButton("🛑 Отменить создание", callback_data="mon_sch:cancel_full")],
+    ])
+    await update.effective_message.reply_text(summary, parse_mode="HTML", reply_markup=kb)
+    return CM_CONFIRM
+
+
+async def handle_monitor_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    action = query.data.split(":")[1]   # mon_confirm:yes or mon_confirm:back_sched
+
+    if action == "back_sched":
+        # Go back to schedule step
+        await query.edit_message_text(
+            "Шаг 6/6: <b>Расписание</b> запусков:",
+            parse_mode="HTML",
+            reply_markup=monitor_schedule_choice(),
+        )
+        return CM_SCHEDULE
+
+    # action == "yes" → create
+    await _create_monitor_now(update, context)
     return ConversationHandler.END
 
 
-# ── Cancel ─────────────────────────────────────────────────────────────────────
+# ── Cancel (fallback: /cancel command) ────────────────────────────────────────
 
 async def cancel_create_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Fallback for /cancel command.
+    If the user has already filled in the monitor name (i.e. serious progress),
+    ask for confirmation before discarding. Otherwise cancel immediately.
+    """
+    draft = _draft(context)
+    has_progress = bool(draft.get("name"))
+
+    if has_progress:
+        # Ask confirmation — return CM_SCHEDULE so mon_cancel:* callbacks are handled
+        await update.message.reply_text(
+            "⚠️ <b>Вы уже заполнили несколько шагов.</b>\n\n"
+            "Отменить создание монитора полностью?\n"
+            "Все введённые данные будут потеряны.",
+            parse_mode="HTML",
+            reply_markup=monitor_cancel_confirm(),
+        )
+        return CM_SCHEDULE   # stay alive so mon_cancel: callbacks fire
+
+    # No meaningful progress — cancel right away
     _clear(context)
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text("❌ Создание монитора отменено.")
-    elif update.message:
-        await update.message.reply_text("❌ Создание монитора отменено.")
+    await update.message.reply_text(
+        "❌ Создание монитора отменено.",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🏠 Главное меню", callback_data="menu:main")
+        ]]),
+    )
     return ConversationHandler.END
 
 
@@ -509,16 +654,29 @@ def build_create_monitor_handler() -> ConversationHandler:
             CM_SUBREDDIT_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_subreddits)],
             CM_KEYWORD_CHOICE:   [CallbackQueryHandler(handle_keyword_preset, pattern="^kw_preset:")],
             CM_KEYWORD_CUSTOM:   [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_keywords)],
-            CM_RUN_MODE:   [CallbackQueryHandler(handle_run_mode, pattern="^runmode:")],
+            CM_RUN_MODE: [
+                CallbackQueryHandler(handle_run_mode, pattern="^runmode:"),
+            ],
             CM_SCHEDULE: [
-                CallbackQueryHandler(handle_schedule_choice, pattern="^sch:"),
-                CallbackQueryHandler(handle_schedule_day,    pattern="^(sch_day|sch_dom):"),
+                # Main schedule choice (mon_sch:manual/weekly/biweekly/monthly/back/cancel_full/back_day)
+                CallbackQueryHandler(handle_schedule_choice,   pattern=r"^mon_sch:(?!back_day)"),
+                CallbackQueryHandler(handle_schedule_back_day, pattern=r"^mon_sch:back_day$"),
+                # Cancel confirmation (mon_cancel:confirm / mon_cancel:back)
+                CallbackQueryHandler(handle_cancel_confirm_cb, pattern=r"^mon_cancel:"),
+                # Day/time sub-steps
+                CallbackQueryHandler(handle_schedule_day, pattern=r"^(sch_day|sch_dom):"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_schedule_time),
             ],
-            CM_CONFIRM: [CallbackQueryHandler(handle_monitor_confirm, pattern="^mon_confirm:")],
+            CM_CONFIRM: [
+                # mon_confirm:yes → create; mon_confirm:back_sched → back to schedule
+                CallbackQueryHandler(handle_monitor_confirm, pattern=r"^mon_confirm:"),
+                # Allow cancel_full from confirm step too
+                CallbackQueryHandler(handle_schedule_choice,  pattern=r"^mon_sch:cancel_full$"),
+            ],
         },
         fallbacks=[
             CommandHandler("cancel", cancel_create_monitor),
+            # cancel_conv is still sent by some early-step cancel_button() keyboards
             CallbackQueryHandler(cancel_create_monitor, pattern="^cancel_conv$"),
         ],
         allow_reentry=True,

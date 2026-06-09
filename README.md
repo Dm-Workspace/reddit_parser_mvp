@@ -584,6 +584,115 @@ python main_runner.py --parser-smoke-test --upload-drive
 
 ---
 
+## Telegram Bot UX Tests
+
+Manual tests to verify create-monitor flow after each deploy.
+
+### ✅ Create monitor — manual schedule (happy path)
+
+```
+1. /projects
+2. Open any project → tap "➕ Создать монитор"
+3. Enter monitor name
+4. Skip or enter description
+5. Choose subreddit preset
+6. Choose keyword preset
+7. Choose run mode (e.g. hot_last_7d)
+8. On schedule step — tap "✅ Только вручную"
+```
+
+Expected result:
+- Monitor is created immediately (no extra confirm step)
+- Success message shows: name, project, source, subreddits, keywords, run mode, schedule=Только вручную
+- Inline buttons appear:
+  - ▶️ Запустить сейчас
+  - 📊 Открыть монитор
+  - 🕒 Настроить расписание
+  - 📁 К проекту
+  - 🏠 Главное меню
+
+---
+
+### 🛑 Cancel protection — full cancel with confirmation
+
+```
+1. Start create monitor flow
+2. Fill name, description, subreddit, keyword, run mode
+3. On schedule step — tap "🛑 Отменить создание"
+```
+
+Expected result:
+- Bot asks for confirmation:
+  "Вы уже заполнили несколько шагов. Все введённые данные будут потеряны."
+- Buttons: "🛑 Да, отменить" / "↩️ Нет, продолжить"
+
+```
+4. Tap "↩️ Нет, продолжить"
+```
+
+Expected result:
+- Schedule step is shown again
+- Flow continues normally — draft is NOT lost
+
+```
+5. Tap "🛑 Отменить создание" again → tap "🛑 Да, отменить"
+```
+
+Expected result:
+- "❌ Создание монитора отменено."
+- Draft cleared
+
+---
+
+### ⬅️ Back navigation from schedule step
+
+```
+1. Reach schedule step
+2. Tap "⬅️ Назад (режим запуска)"
+```
+
+Expected result:
+- Run mode selection is shown again
+- Previously chosen run mode is cleared from draft
+- No data loss for name / subreddits / keywords
+
+---
+
+### /cancel with confirmation (partial progress)
+
+```
+1. Start create monitor, enter name
+2. Type /cancel
+```
+
+Expected result:
+- Bot asks: "Вы уже заполнили несколько шагов. Отменить создание монитора полностью?"
+- Buttons: "🛑 Да, отменить" / "↩️ Нет, продолжить"
+
+```
+3. /cancel with no progress (before name step)
+```
+
+Expected result:
+- Immediate: "❌ Создание монитора отменено." (no confirmation)
+
+---
+
+### 🕒 Scheduled monitor (weekly) — full flow
+
+```
+1. Reach schedule step → tap "🕒 1 раз в неделю"
+2. Choose weekday (e.g. Пн)
+3. Enter time: 08:00
+```
+
+Expected result:
+- Confirm screen with schedule summary
+- Tap "✅ Создать" → monitor created with scheduled mode
+- Buttons: ▶️ Запустить / 📊 Открыть / 🕒 Настроить расписание / 📁 К проекту / 🏠 Главное меню
+
+---
+
 ## Troubleshooting
 
 ### Bot starts but `/status` shows "database error"

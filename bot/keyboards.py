@@ -116,6 +116,32 @@ def run_confirm_keyboard(monitor_id: str, force: bool = False) -> InlineKeyboard
 
 # ── Schedule keyboards ─────────────────────────────────────────────────────────
 
+def monitor_schedule_choice() -> InlineKeyboardMarkup:
+    """
+    Used during /create_monitor flow (step 6).
+    Distinct from schedule_frequency() which is used when editing an existing monitor.
+    'Только вручную' creates the monitor immediately (no extra confirm step).
+    '⬅️ Назад' returns to run mode.
+    '🛑 Отменить создание' asks for full-cancel confirmation.
+    """
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Только вручную",          callback_data="mon_sch:manual")],
+        [InlineKeyboardButton("🕒 1 раз в неделю",          callback_data="mon_sch:weekly")],
+        [InlineKeyboardButton("🗓 1 раз в 2 недели",        callback_data="mon_sch:biweekly")],
+        [InlineKeyboardButton("📅 1 раз в месяц",           callback_data="mon_sch:monthly")],
+        [InlineKeyboardButton("⬅️ Назад (режим запуска)",   callback_data="mon_sch:back")],
+        [InlineKeyboardButton("🛑 Отменить создание",       callback_data="mon_sch:cancel_full")],
+    ])
+
+
+def monitor_cancel_confirm() -> InlineKeyboardMarkup:
+    """Shown when user asks to fully cancel monitor creation mid-flow."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛑 Да, отменить",            callback_data="mon_cancel:confirm")],
+        [InlineKeyboardButton("↩️ Нет, продолжить",         callback_data="mon_cancel:back")],
+    ])
+
+
 def schedule_frequency() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👆 Только вручную",  callback_data="sch:manual")],
