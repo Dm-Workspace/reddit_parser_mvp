@@ -347,6 +347,18 @@ async function openRunDetail(runId) {
       downloadsHtml += "</div>";
     }
 
+    // Build warning / error blocks with appropriate styling
+    let alertHtml = "";
+    if (run.status === "failed" && run.error_message) {
+      alertHtml = `<div style="margin-top:10px;padding:10px 12px;background:#fde8e8;border-radius:8px;color:#c0392b;font-size:13px;">
+        <b>❌ Ошибка:</b><br>${esc(run.error_message.substring(0, 400))}
+      </div>`;
+    } else if (run.status === "completed_with_warning" && run.warning_message) {
+      alertHtml = `<div style="margin-top:10px;padding:10px 12px;background:#fff3cd;border-radius:8px;color:#856404;font-size:13px;">
+        <b>⚠️ Предупреждение:</b><br>${esc(run.warning_message.substring(0, 300))}
+      </div>`;
+    }
+
     document.getElementById("run-detail-body").innerHTML = `
       <div class="info-row"><span class="info-key">Статус</span><span class="info-val">${icon} ${esc(run.status)}</span></div>
       <div class="info-row"><span class="info-key">Монитор</span><span class="info-val">${esc(run.monitor_id)}</span></div>
@@ -354,8 +366,7 @@ async function openRunDetail(runId) {
       <div class="info-row"><span class="info-key">Постов</span><span class="info-val">${run.total_posts}</span></div>
       <div class="info-row"><span class="info-key">Комментариев</span><span class="info-val">${run.total_comments}</span></div>
       <div class="info-row"><span class="info-key">Запущен</span><span class="info-val">${(run.started_at || "—").substring(0, 16)}</span></div>
-      ${run.warning_message ? `<div class="info-row"><span class="info-key">⚠️</span><span class="info-val">${esc(run.warning_message)}</span></div>` : ""}
-      ${run.error_message ? `<div class="info-row"><span class="info-key">❌</span><span class="info-val">${esc(run.error_message.substring(0, 100))}</span></div>` : ""}
+      ${alertHtml}
       ${downloadsHtml}
     `;
     openModal("modal-run-detail");

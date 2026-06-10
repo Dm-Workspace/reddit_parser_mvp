@@ -1,9 +1,13 @@
+import asyncio
 import json
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from loguru import logger
+from starlette.concurrency import run_in_threadpool
 from app.api.deps import get_telegram_user
 from storage import database as db
 from storage.models import Monitor, MAX_ACTIVE_MONITORS_PER_PROJECT
@@ -128,7 +132,13 @@ async def archive_monitor(monitor_id: str, user: dict = Depends(get_telegram_use
 
 @router.post("/monitors/{monitor_id}/run")
 async def run_monitor_endpoint(monitor_id: str, user: dict = Depends(get_telegram_user)):
-    """Trigger a manual run for this monitor."""
+    """
+    Trigger a manual run for this monitor.
+
+    The Reddit parser uses Playwright Sync API which CANNOT run inside the
+    asyncio event loop. We offload it to a thread via run_in_threadpool so
+    the event loop is never blocked and Playwright stays happy.
+    """
     m = db.get_monitor(monitor_id)
     if not m:
         raise HTTPException(status_code=404, detail="Monitor not found")
@@ -136,24 +146,54 @@ async def run_monitor_endpoint(monitor_id: str, user: dict = Depends(get_telegra
     if m.archived or not m.enabled:
         raise HTTPException(status_code=400, detail="Monitor is disabled or archived")
 
-    # Check for active run
+    # Deduplicate: return existing active run immediately
     active = db.get_active_run_for_monitor(monitor_id)
     if active:
+        logger.info(f"[run] monitor={monitor_id} already running run_id={active.id}")
         return {"run_id": active.id, "status": active.status, "message": "Already running"}
 
-    try:
+    uid = user["telegram_id"]
+    started_at = datetime.now(timezone.utc).isoformat()
+    logger.info(
+        f"[run] START monitor={monitor_id} project={m.project_id} "
+        f"owner={uid} run_mode={m.run_mode} source=reddit started_at={started_at}"
+    )
+
+    def _sync_run() -> dict:
+        """Runs entirely in a worker thread — safe for Playwright Sync API."""
         from app.workers.reddit_worker import RedditWorker
         worker = RedditWorker()
-        result = worker.run_monitor_sync(monitor_id)
-        return {
-            "run_id": result.get("run_id"),
-            "status": result.get("status", "completed"),
-            "message": result.get("message", ""),
-            "total_posts": result.get("total_posts", 0),
-            "total_comments": result.get("total_comments", 0),
-        }
+        return worker.run_monitor_sync(monitor_id)
+
+    try:
+        # run_in_threadpool executes _sync_run in a separate OS thread,
+        # keeping the asyncio event loop free and Playwright Sync API happy.
+        result = await run_in_threadpool(_sync_run)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Run failed: {str(e)[:200]}")
+        logger.exception(f"[run] EXCEPTION monitor={monitor_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Run failed: {str(e)[:300]}")
+
+    run_status = result.get("status", "failed")
+    total_posts = result.get("total_posts", 0)
+    total_comments = result.get("total_comments", 0)
+    message = result.get("message", "")
+
+    logger.info(
+        f"[run] DONE monitor={monitor_id} status={run_status} "
+        f"posts={total_posts} comments={total_comments} "
+        f"export={result.get('export_path', '')} "
+        f"{'ERR: ' + message[:80] if run_status == 'failed' else ''}"
+    )
+
+    return {
+        "run_id": result.get("run_id"),
+        "status": run_status,
+        "message": message,
+        "total_posts": total_posts,
+        "total_comments": total_comments,
+        "export_path": result.get("export_path", ""),
+        "quality_status": result.get("quality_status", ""),
+    }
 
 
 def _monitor_dict(m) -> dict:

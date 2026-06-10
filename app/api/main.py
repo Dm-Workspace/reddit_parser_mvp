@@ -1,11 +1,30 @@
 """
 FastAPI application for Trend Intelligence Hub.
 """
+import json
 import os
-from fastapi import FastAPI
+from typing import Any
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+
+
+class UTF8JSONResponse(JSONResponse):
+    """
+    JSONResponse that always sets charset=utf-8 and uses ensure_ascii=False,
+    so Cyrillic/Ukrainian text renders correctly in the browser without mojibake.
+    """
+    media_type = "application/json; charset=utf-8"
+
+    def render(self, content: Any) -> bytes:
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
 # Load .env before anything reads os.environ
 try:
@@ -19,7 +38,8 @@ from app.api.routes import status, me, projects, monitors, runs, presets, source
 app = FastAPI(
     title="Trend Intelligence Hub API",
     description="Backend API for the Trend Intelligence Hub Telegram Mini App",
-    version="6.0",
+    version="6.0.1",
+    default_response_class=UTF8JSONResponse,
 )
 
 # CORS - allow Telegram WebApp and local dev
