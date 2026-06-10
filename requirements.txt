@@ -25,3 +25,8 @@ google-auth>=2.23.0
 
 # ── Telegram Bot ──────────────────────────────────────────────────────────────
 python-telegram-bot>=20.7
+
+# ── Mini App API (FastAPI) ─────────────────────────────────────────────────────
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6

@@ -10,12 +10,19 @@ from typing import List
 # ── Main menu ──────────────────────────────────────────────────────────────────
 
 def main_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+    import os
+    from telegram import WebAppInfo
+    miniapp_url = os.environ.get("MINIAPP_URL", "")
+    rows = []
+    if miniapp_url:
+        rows.append([InlineKeyboardButton("🚀 Открыть Trend Hub", web_app=WebAppInfo(url=miniapp_url))])
+    rows += [
         [InlineKeyboardButton("📁 Мои проекты",    callback_data="menu:projects")],
         [InlineKeyboardButton("➕ Создать проект", callback_data="menu:create_project")],
         [InlineKeyboardButton("📊 Запуски",        callback_data="menu:runs"),
          InlineKeyboardButton("🔧 Статус",         callback_data="menu:status")],
-    ])
+    ]
+    return InlineKeyboardMarkup(rows)
 
 
 # ── Project keyboards ──────────────────────────────────────────────────────────
