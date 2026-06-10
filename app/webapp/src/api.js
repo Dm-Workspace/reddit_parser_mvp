@@ -27,6 +27,9 @@ window.API = (function () {
     // Status
     getStatus: () => request("GET", "/status"),
 
+    // Labels
+    getLabels: () => request("GET", "/labels"),
+
     // Me
     getMe: () => request("GET", "/me"),
 

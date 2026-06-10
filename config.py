@@ -83,6 +83,32 @@ SUBREDDIT_PRESETS = {
     "ru_uk_mixed": [
         "russia", "ukraine", "ukraina", "rf", "podslushano",
     ],
+    "nutrition_health": [
+        "nutrition", "Supplements", "Biohackers", "GutHealth", "Microbiome",
+        "IBS", "SIBO", "Menopause", "Sleep", "Anxiety", "Nootropics",
+        "loseit", "xxfitness", "AskWomenOver30",
+    ],
+    "psychology_therapy": [
+        "psychology", "therapy", "AskTherapists", "mentalhealth", "Anxiety",
+        "depression", "DecidingToBeBetter", "selfimprovement", "relationships",
+        "attachment_theory", "CPTSD", "socialskills",
+    ],
+    "coaching_growth": [
+        "selfimprovement", "getdisciplined", "productivity", "DecidingToBeBetter",
+        "habits", "NonZeroDay", "LifeProTips", "careerguidance", "findapath",
+    ],
+    "expert_business": [
+        "Entrepreneur", "smallbusiness", "freelance", "consulting", "coaching",
+        "marketing", "sales", "solopreneur", "SaaS",
+    ],
+    "service_marketing": [
+        "marketing", "sales", "Entrepreneur", "smallbusiness", "SaaS",
+        "CRM", "advertising", "socialmedia", "copywriting", "agency",
+    ],
+    "ai_business_tools": [
+        "ArtificialIntelligence", "ChatGPT", "ClaudeAI", "OpenAI", "AI_Agents",
+        "automation", "SaaS", "Entrepreneur", "marketing", "smallbusiness",
+    ],
 }
 
 # Keyword presets
@@ -112,6 +138,40 @@ KEYWORD_PRESETS = {
         "llm", "gpt", "claude", "gemini", "openai", "anthropic",
         "prompt", "fine-tuning", "rag", "embedding", "inference",
         "agent", "chatbot", "ai tool", "machine learning",
+    ],
+    "nutrition_health": [
+        "nutrition", "supplements", "vitamin D", "magnesium", "iron", "ferritin",
+        "gut health", "bloating", "IBS", "SIBO", "microbiome", "sleep", "fatigue",
+        "brain fog", "energy", "hormones", "menopause", "weight loss", "anxiety",
+        "stress", "cortisol", "inflammation",
+    ],
+    "psychology_therapy": [
+        "anxiety", "burnout", "therapy", "trauma", "boundaries", "self esteem",
+        "attachment", "emotional regulation", "relationships", "stress",
+        "overthinking", "avoidance", "people pleasing", "inner critic",
+        "shame", "confidence", "self worth",
+    ],
+    "coaching_growth": [
+        "goals", "motivation", "habits", "discipline", "procrastination",
+        "focus", "productivity", "routine", "mindset", "consistency",
+        "life change", "personal growth", "accountability", "planning", "overwhelm",
+    ],
+    "expert_business": [
+        "consulting", "expert", "coach", "client", "service business",
+        "positioning", "personal brand", "offer", "pricing", "sales",
+        "lead generation", "boundaries", "burnout", "scale", "audience",
+        "authority", "content", "community",
+    ],
+    "service_marketing": [
+        "marketing", "sales funnel", "lead generation", "content marketing",
+        "CRM", "pipeline", "conversion", "retention", "onboarding",
+        "customer acquisition", "offer", "copywriting", "positioning",
+        "service business", "agency", "automation", "email marketing", "social media",
+    ],
+    "ai_business_tools": [
+        "AI tools", "AI agents", "automation", "ChatGPT", "Claude", "OpenAI",
+        "workflow", "CRM automation", "content automation", "sales automation",
+        "marketing automation", "no-code", "agents", "business process", "productivity",
     ],
 }
 

@@ -34,6 +34,7 @@ except ImportError:
     pass
 
 from app.api.routes import status, me, projects, monitors, runs, presets, sources
+from app.api.routes import labels as labels_router
 
 app = FastAPI(
     title="Trend Intelligence Hub API",
@@ -60,6 +61,7 @@ app.include_router(monitors.router, prefix=prefix, tags=["monitors"])
 app.include_router(runs.router,     prefix=prefix, tags=["runs"])
 app.include_router(presets.router,  prefix=prefix, tags=["presets"])
 app.include_router(sources.router,  prefix=prefix, tags=["sources"])
+app.include_router(labels_router.router, prefix=prefix, tags=["labels"])
 
 # Serve Mini App static files at /webapp
 _webapp_dir = os.path.join(os.path.dirname(__file__), "..", "webapp")

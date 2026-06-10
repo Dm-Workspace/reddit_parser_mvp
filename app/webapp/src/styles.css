@@ -247,3 +247,58 @@ input:focus, select:focus { outline: none; border-color: var(--tg-theme-button-c
   text-decoration: none;
   font-size: 12px;
 }
+
+/* Tab description text */
+.tab-description {
+  font-size: 13px;
+  color: var(--tg-theme-hint-color, #888);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+/* Hint text under form fields */
+.hint-text {
+  font-size: 11px;
+  color: var(--tg-theme-hint-color, #aaa);
+  margin-top: 3px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+/* Status section title */
+.status-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tg-theme-hint-color, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 4px 0 6px;
+}
+
+/* Clickable status link */
+.status-link {
+  color: var(--tg-theme-button-color, #007aff);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+.status-link:active { opacity: 0.7; }
+
+/* Alert blocks in run detail */
+.alert-block {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.alert-error { background: #fde8e8; color: #c0392b; }
+.alert-warn  { background: #fff3cd; color: #856404; }
+
+/* Downloads */
+.downloads-header {
+  font-weight: 600;
+  font-size: 13px;
+  margin-top: 12px;
+  margin-bottom: 6px;
+}

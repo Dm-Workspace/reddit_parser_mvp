@@ -29,6 +29,7 @@
       <div class="section-header">
         <h2>Обзор</h2>
       </div>
+      <p class="tab-description">Trend Intelligence Hub помогает отслеживать реальные обсуждения, боли и вопросы аудитории на Reddit. Создайте проект, настройте монитор и запускайте сбор трендов.</p>
       <div id="dashboard-stats" class="stats-grid">
         <div class="stat-card" id="stat-projects">
           <div class="stat-num">—</div>
@@ -62,6 +63,8 @@
         <h2>Проекты</h2>
         <button class="btn btn-sm btn-primary" id="btn-create-project">➕ Создать</button>
       </div>
+      <p class="tab-description">Проект — отдельное направление анализа. Например: «Нутрициология», «Маркетинг услуг», «AI-инструменты».</p>
+      <p class="hint-text" id="projects-hint">На старте можно создать до 3 проектов.</p>
       <div id="projects-list"></div>
     </div>
 
@@ -73,6 +76,7 @@
           <option value="">Все проекты</option>
         </select>
       </div>
+      <p class="tab-description">Каждый запуск создаёт отчёты: Excel для ручного анализа, JSON для интеграций и Handoff JSON для AI-агента.</p>
       <div id="runs-list"></div>
     </div>
 
@@ -93,13 +97,15 @@
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
-      <label>Название *</label>
-      <input type="text" id="proj-name" placeholder="Wellness, CRM tools, AI agents…" />
+      <label>Название проекта *</label>
+      <input type="text" id="proj-name" placeholder="Нутрициология, Психология, Маркетинг услуг…" />
+      <div class="hint-text">Например: Нутрициология, Психология, AI-инструменты для экспертов.</div>
       <label>Описание</label>
-      <input type="text" id="proj-desc" placeholder="Необязательно" />
+      <input type="text" id="proj-desc" placeholder="Какие боли и тренды вы хотите отслеживать?" />
       <label>Ниша / Рынок</label>
-      <input type="text" id="proj-niche" placeholder="women wellness, CRM SaaS…" />
-      <label>Язык анализа</label>
+      <input type="text" id="proj-niche" placeholder="Женщины 35+, нутрициология, коучи, малый бизнес…" />
+      <div class="hint-text">Чем занимается ваша аудитория или рынок?</div>
+      <label>Язык результата</label>
       <select id="proj-lang">
         <option value="en">English</option>
         <option value="ru">Русский</option>
@@ -131,26 +137,53 @@
     </div>
     <div class="modal-body">
       <input type="hidden" id="mon-project-id" />
-      <label>Название *</label>
-      <input type="text" id="mon-name" placeholder="Wellness Hot, Rising trends…" />
+      <label>Название монитора *</label>
+      <input type="text" id="mon-name" placeholder="Боли клиентов по нутрициологии, CRM-запросы…" />
+
       <label>Описание</label>
       <input type="text" id="mon-desc" placeholder="Необязательно" />
-      <label>Subreddit пресет</label>
-      <select id="mon-sr-preset"><option value="">Загрузка…</option></select>
-      <label>Keyword пресет</label>
-      <select id="mon-kw-preset"><option value="">Загрузка…</option></select>
-      <label>Режим запуска</label>
-      <select id="mon-run-mode">
-        <option value="hot_last_7d">🔥 Горячее за 7 дней</option>
-        <option value="rising_24h">📈 Растущее за 24ч</option>
-        <option value="top_week">⭐ Топ за неделю</option>
-        <option value="top_month">🏆 Топ за месяц</option>
+
+      <label>Источник данных</label>
+      <select id="mon-source" disabled>
+        <option value="reddit">Reddit (доступен сейчас)</option>
+        <option value="youtube" disabled>YouTube (скоро)</option>
       </select>
+      <div class="hint-text">Reddit — анализ обсуждений, болей и вопросов аудитории.</div>
+
+      <label>Subreddit-пресет</label>
+      <select id="mon-sr-preset"><option value="">— Выберите пресет —</option></select>
+      <div class="hint-text">Готовый набор сообществ Reddit. Выберите ближайший к вашей теме.</div>
+
+      <label>Keyword-пресет</label>
+      <select id="mon-kw-preset"><option value="">— Выберите пресет —</option></select>
+      <div class="hint-text">Ключевые слова для фильтрации релевантных обсуждений.</div>
+
+      <div id="custom-inputs" style="display:none">
+        <label>Subreddits вручную</label>
+        <input type="text" id="mon-custom-subs" placeholder="nutrition, GutHealth, Anxiety, loseit…" />
+        <div class="hint-text">Введите 5–15 сабреддитов через запятую. Чем шире список — тем больше данных.</div>
+        <label>Keywords вручную</label>
+        <input type="text" id="mon-custom-kws" placeholder="fatigue, supplements, gut health…" />
+        <div class="hint-text">Введите 10–30 ключевых слов через запятую.</div>
+      </div>
+
+      <label>Режим сбора</label>
+      <select id="mon-run-mode">
+        <option value="hot_last_7d">Горячие обсуждения за 7 дней</option>
+        <option value="rising_24h">Быстро растущие темы за 24 часа</option>
+        <option value="top_week">Лучшее за неделю</option>
+        <option value="top_month">Лучшее за месяц</option>
+      </select>
+      <div class="hint-text">«Горячие за 7 дней» подходит для регулярного мониторинга болей и трендов.</div>
+
       <label>Расписание</label>
       <select id="mon-schedule-mode">
-        <option value="manual">✅ Только вручную</option>
-        <option value="scheduled">🕒 По расписанию</option>
+        <option value="manual">Только ручной запуск</option>
+        <option value="weekly">1 раз в неделю</option>
+        <option value="biweekly">1 раз в 2 недели</option>
+        <option value="monthly">1 раз в месяц</option>
       </select>
+      <div class="hint-text">Для начала рекомендуем «Только ручной запуск» — запускайте когда нужно.</div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Отмена</button>

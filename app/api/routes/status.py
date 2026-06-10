@@ -39,4 +39,7 @@ async def api_status():
         "telegram_bot_configured": bool(os.environ.get("TELEGRAM_BOT_TOKEN")),
         "drive_configured": drive_configured,
         "miniapp_dev_mode": os.environ.get("MINIAPP_DEV_MODE", "false").lower() == "true",
+        "storage_provider": os.environ.get("STORAGE_PROVIDER", "local"),
+        "export_retention_days": int(os.environ.get("EXPORT_RETENTION_DAYS", "30")),
+        "cleanup_local_files": os.environ.get("CLEANUP_LOCAL_FILES", "false").lower() == "true",
     }

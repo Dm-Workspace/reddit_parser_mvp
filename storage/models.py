@@ -163,4 +163,4 @@ MAX_ACTIVE_MONITORS_PER_PROJECT = int(__import__("os").environ.get("MAX_ACTIVE_M
 MAX_MANUAL_RUNS_PER_DAY         = int(__import__("os").environ.get("MAX_MANUAL_RUNS_PER_DAY", "5"))
 MAX_TOTAL_RUNS_PER_MONTH        = int(__import__("os").environ.get("MAX_TOTAL_RUNS_PER_MONTH", "30"))
 
-APP_VERSION = "6.0.1"
+APP_VERSION = "6.1"

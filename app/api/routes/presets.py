@@ -9,6 +9,25 @@ from storage import database as db
 
 router = APIRouter()
 
+# Human-readable labels for preset IDs shown in the Mini App
+PRESET_LABELS = {
+    # Subreddit presets
+    "wellness_en":          "Нутрициология и здоровье",
+    "wellness_gut":         "Здоровье кишечника",
+    "wellness_women":       "Женское здоровье",
+    "wellness_energy":      "Энергия и биохакинг",
+    "crm_en":               "CRM и продажи",
+    "ai_en":                "AI-инструменты",
+    "ru_uk_mixed":          "Русскоязычная аудитория",
+    "nutrition_health":     "Нутрициология и здоровье (полный)",
+    "psychology_therapy":   "Психология и терапия",
+    "coaching_growth":      "Коучинг и личное развитие",
+    "expert_business":      "Экспертная деятельность",
+    "service_marketing":    "Маркетинг услуг",
+    "ai_business_tools":    "AI-инструменты для бизнеса",
+    "custom_manual":        "Ручная настройка",
+}
+
 
 class SubredditPresetCreate(BaseModel):
     name: str
@@ -73,7 +92,14 @@ def _sr_dict(p) -> dict:
             subs = json.loads(p.subreddits)
         except Exception:
             pass
-    return {"id": p.id, "name": p.name, "subreddits": subs, "is_system": bool(p.is_system)}
+    return {
+        "id": p.id,
+        "name": p.name,
+        "label": PRESET_LABELS.get(p.id, p.name),
+        "subreddits": subs,
+        "subreddits_count": len(subs),
+        "is_system": bool(p.is_system),
+    }
 
 
 def _kw_dict(p) -> dict:
@@ -83,4 +109,11 @@ def _kw_dict(p) -> dict:
             kws = json.loads(p.keywords)
         except Exception:
             pass
-    return {"id": p.id, "name": p.name, "keywords": kws, "is_system": bool(p.is_system)}
+    return {
+        "id": p.id,
+        "name": p.name,
+        "label": PRESET_LABELS.get(p.id, p.name),
+        "keywords": kws,
+        "keywords_count": len(kws),
+        "is_system": bool(p.is_system),
+    }
