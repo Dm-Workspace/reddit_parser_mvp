@@ -302,3 +302,54 @@ input:focus, select:focus { outline: none; border-color: var(--tg-theme-button-c
   margin-top: 12px;
   margin-bottom: 6px;
 }
+
+/* Source tabs */
+.source-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.source-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: 2px solid var(--tg-theme-hint-color, #ddd);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tg-theme-text-color, #333);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.source-tab.active {
+  border-color: var(--tg-theme-button-color, #007aff);
+  background: var(--tg-theme-button-color, #007aff);
+  color: var(--tg-theme-button-text-color, #fff);
+}
+.source-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Preset summary */
+.preset-summary {
+  background: var(--tg-theme-secondary-bg-color, #f0f4ff);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.preset-summary-row { margin-bottom: 6px; }
+.preset-summary-row:last-child { margin-bottom: 0; }
+.preset-tags {
+  color: var(--tg-theme-hint-color, #555);
+  font-family: monospace;
+  font-size: 11px;
+}
+.preset-query-list {
+  margin: 4px 0 0 16px;
+  padding: 0;
+  color: var(--tg-theme-hint-color, #555);
+  font-size: 12px;
+}

@@ -137,57 +137,117 @@
     </div>
     <div class="modal-body">
       <input type="hidden" id="mon-project-id" />
+
       <label>Название монитора *</label>
       <input type="text" id="mon-name" placeholder="Боли клиентов по нутрициологии, CRM-запросы…" />
 
       <label>Описание</label>
       <input type="text" id="mon-desc" placeholder="Необязательно" />
 
+      <!-- Source selector -->
       <label>Источник данных</label>
-      <select id="mon-source" disabled>
-        <option value="reddit">Reddit (доступен сейчас)</option>
-        <option value="youtube" disabled>YouTube (скоро)</option>
-      </select>
-      <div class="hint-text">Reddit — анализ обсуждений, болей и вопросов аудитории.</div>
+      <div class="source-tabs" id="source-tabs">
+        <button class="source-tab active" data-source="reddit" onclick="selectSource('reddit')">🟠 Reddit</button>
+        <button class="source-tab" data-source="youtube" onclick="selectSource('youtube')">🔴 YouTube</button>
+      </div>
+      <div class="hint-text" id="source-hint">Reddit — анализ живых обсуждений, болей и вопросов аудитории.</div>
 
-      <label>Subreddit-пресет</label>
-      <select id="mon-sr-preset"><option value="">— Выберите пресет —</option></select>
-      <div class="hint-text">Готовый набор сообществ Reddit. Выберите ближайший к вашей теме.</div>
+      <!-- Preset pack selector -->
+      <label>Нишевой пресет</label>
+      <select id="mon-preset-pack"></select>
+      <div class="hint-text">Готовый набор настроек под вашу нишу. Выберите ближайший вариант или «Ручная настройка».</div>
 
-      <label>Keyword-пресет</label>
-      <select id="mon-kw-preset"><option value="">— Выберите пресет —</option></select>
-      <div class="hint-text">Ключевые слова для фильтрации релевантных обсуждений.</div>
+      <!-- Preset summary -->
+      <div id="preset-summary" class="preset-summary hidden"></div>
 
-      <div id="custom-inputs" style="display:none">
-        <label>Subreddits вручную</label>
-        <input type="text" id="mon-custom-subs" placeholder="nutrition, GutHealth, Anxiety, loseit…" />
-        <div class="hint-text">Введите 5–15 сабреддитов через запятую. Чем шире список — тем больше данных.</div>
-        <label>Keywords вручную</label>
-        <input type="text" id="mon-custom-kws" placeholder="fatigue, supplements, gut health…" />
-        <div class="hint-text">Введите 10–30 ключевых слов через запятую.</div>
+      <!-- ── Reddit settings ── -->
+      <div id="reddit-settings">
+        <div id="reddit-custom-inputs" style="display:none">
+          <label>Subreddits вручную</label>
+          <input type="text" id="mon-custom-subs" placeholder="nutrition, GutHealth, Anxiety, loseit…" />
+          <div class="hint-text">Названия сабреддитов без r/, через запятую. Рекомендуется 5–15.</div>
+          <label>Keywords вручную</label>
+          <input type="text" id="mon-custom-kws" placeholder="fatigue, supplements, gut health…" />
+          <div class="hint-text">Ключевые слова через запятую. Рекомендуется 10–30.</div>
+        </div>
+
+        <label>Режим сбора</label>
+        <select id="mon-run-mode">
+          <option value="hot_last_7d">Горячие обсуждения за 7 дней</option>
+          <option value="rising_24h">Быстро растущие темы за 24 часа</option>
+          <option value="top_week">Лучшее за неделю</option>
+          <option value="top_month">Лучшее за месяц</option>
+        </select>
+        <div class="hint-text">«Горячие за 7 дней» — для регулярного мониторинга болей и трендов.</div>
+
+        <label>Расписание</label>
+        <select id="mon-schedule-mode">
+          <option value="manual">Только ручной запуск</option>
+          <option value="weekly">1 раз в неделю</option>
+          <option value="biweekly">1 раз в 2 недели</option>
+          <option value="monthly">1 раз в месяц</option>
+        </select>
+        <div class="hint-text">Для начала рекомендуем «Только ручной запуск».</div>
       </div>
 
-      <label>Режим сбора</label>
-      <select id="mon-run-mode">
-        <option value="hot_last_7d">Горячие обсуждения за 7 дней</option>
-        <option value="rising_24h">Быстро растущие темы за 24 часа</option>
-        <option value="top_week">Лучшее за неделю</option>
-        <option value="top_month">Лучшее за месяц</option>
-      </select>
-      <div class="hint-text">«Горячие за 7 дней» подходит для регулярного мониторинга болей и трендов.</div>
+      <!-- ── YouTube settings ── -->
+      <div id="youtube-settings" style="display:none">
+        <div class="alert-block alert-warn" style="margin-top:0;margin-bottom:12px">
+          <b>🔴 YouTube Core подготовлен</b><br>
+          Монитор можно создать сейчас. Запуск будет доступен после подключения YouTube Core.<br>
+          <span style="font-size:11px;opacity:0.8">Branch: youtube-core-adapter-for-trend-hub-v1 · Tag: youtube-core-v1</span>
+        </div>
 
-      <label>Расписание</label>
-      <select id="mon-schedule-mode">
-        <option value="manual">Только ручной запуск</option>
-        <option value="weekly">1 раз в неделю</option>
-        <option value="biweekly">1 раз в 2 недели</option>
-        <option value="monthly">1 раз в месяц</option>
-      </select>
-      <div class="hint-text">Для начала рекомендуем «Только ручной запуск» — запускайте когда нужно.</div>
+        <div id="youtube-custom-inputs" style="display:none">
+          <label>Поисковые запросы вручную</label>
+          <textarea id="mon-custom-queries" placeholder="how to get coaching clients&#10;marketing for consultants&#10;sales funnel for services" rows="4" style="width:100%;padding:10px;border:1px solid var(--tg-theme-hint-color,#ccc);border-radius:8px;font-size:13px;resize:vertical"></textarea>
+          <div class="hint-text">Каждый запрос с новой строки. Рекомендуется 5–15 запросов.</div>
+          <label>Каналы (необязательно)</label>
+          <input type="text" id="mon-custom-channels" placeholder="@hubspot, @neilpatel…" />
+          <div class="hint-text">YouTube @handle или channel ID, через запятую. Оставьте пустым для поиска по всему YouTube.</div>
+        </div>
+
+        <label>Период публикации</label>
+        <select id="yt-period">
+          <option value="last_7d">Последние 7 дней</option>
+          <option value="last_30d">Последние 30 дней</option>
+          <option value="last_90d" selected>Последние 90 дней</option>
+          <option value="last_year">Последний год</option>
+        </select>
+
+        <label>Минимум просмотров</label>
+        <select id="yt-min-views">
+          <option value="100">100+</option>
+          <option value="500" selected>500+</option>
+          <option value="1000">1 000+</option>
+          <option value="5000">5 000+</option>
+        </select>
+
+        <label>Формат видео</label>
+        <select id="yt-format">
+          <option value="no_shorts" selected>Только длинные видео</option>
+          <option value="include_shorts">Включая Shorts</option>
+          <option value="only_shorts">Только Shorts</option>
+        </select>
+
+        <label>Комментарии</label>
+        <select id="yt-comments">
+          <option value="20">Собирать (20 на видео)</option>
+          <option value="50">Собирать (50 на видео)</option>
+          <option value="0">Не собирать</option>
+        </select>
+
+        <label>Расписание</label>
+        <select id="yt-schedule-mode">
+          <option value="manual">Только ручной запуск</option>
+          <option value="weekly">1 раз в неделю</option>
+          <option value="monthly">1 раз в месяц</option>
+        </select>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Отмена</button>
-      <button class="btn btn-primary" id="btn-save-monitor">Создать</button>
+      <button class="btn btn-primary" id="btn-save-monitor">Создать монитор</button>
     </div>
   </div>
 

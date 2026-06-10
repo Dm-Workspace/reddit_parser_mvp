@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -25,6 +26,8 @@ class MonitorCreate(BaseModel):
     name: str
     description: str = ""
     source: str = "reddit"
+    source_config: str = ""        # JSON config blob
+    preset_pack_id: Optional[str] = None
     subreddit_preset_id: Optional[str] = None
     keyword_preset_id: Optional[str] = None
     custom_subreddits: List[str] = []
@@ -87,6 +90,28 @@ async def create_monitor(body: MonitorCreate, user: dict = Depends(get_telegram_
         enabled=True,
         archived=False,
     )
+    monitor.source = body.source
+    # Build source_config if preset_pack_id provided
+    if body.source_config:
+        monitor.source_config = body.source_config
+    elif body.preset_pack_id:
+        import json as _json
+        from app.api.routes.preset_packs import get_pack_reddit_config, get_pack_youtube_config
+        if body.source == "reddit":
+            rc = get_pack_reddit_config(body.preset_pack_id)
+            monitor.source_config = _json.dumps({
+                "preset_pack_id": body.preset_pack_id,
+                "subreddits": rc.get("subreddits", []),
+                "keywords": rc.get("keywords", []),
+                "run_mode": body.run_mode,
+                "default_language_mode": rc.get("default_language_mode", "en"),
+            })
+        elif body.source == "youtube":
+            yc = get_pack_youtube_config(body.preset_pack_id)
+            monitor.source_config = _json.dumps({
+                "preset_pack_id": body.preset_pack_id,
+                **yc,
+            })
     db.create_monitor(monitor)
     return _monitor_dict(monitor)
 
@@ -159,6 +184,19 @@ async def run_monitor_endpoint(monitor_id: str, user: dict = Depends(get_telegra
         f"owner={uid} run_mode={m.run_mode} source=reddit started_at={started_at}"
     )
 
+    # Check source availability
+    from app.services import source_registry
+    if not source_registry.is_source_active(m.source or "reddit"):
+        source_info = source_registry.SOURCES.get(m.source or "reddit", {})
+        label = source_info.get("label", m.source)
+        branch = source_info.get("integration_branch", "")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Источник {label} ещё не активен. "
+                   f"Запуск будет доступен после подключения {label} Core"
+                   + (f" (branch: {branch})" if branch else "") + ".",
+        )
+
     def _sync_run() -> dict:
         """Runs entirely in a worker thread — safe for Playwright Sync API."""
         from app.workers.reddit_worker import RedditWorker
@@ -202,6 +240,9 @@ def _monitor_dict(m) -> dict:
         "project_id": m.project_id,
         "name": m.name,
         "description": m.description or "",
+        "source": m.source or "reddit",
+        "source_config": m.source_config or "",
+        "preset_pack_id": _extract_preset_pack_id(m.source_config),
         "run_mode": m.run_mode,
         "schedule_mode": m.schedule_mode,
         "frequency": m.frequency or "none",
@@ -214,6 +255,16 @@ def _monitor_dict(m) -> dict:
         "custom_keywords": _parse_json_list(m.custom_keywords),
         "last_run_at": getattr(m, "last_run_at", None),
     }
+
+
+def _extract_preset_pack_id(source_config: str) -> Optional[str]:
+    if not source_config:
+        return None
+    try:
+        d = json.loads(source_config)
+        return d.get("preset_pack_id")
+    except Exception:
+        return None
 
 
 def _parse_json_list(val) -> list:

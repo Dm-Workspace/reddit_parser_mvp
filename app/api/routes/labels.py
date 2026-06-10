@@ -7,6 +7,17 @@ RUN_MODE_LABELS = {
     "rising_24h":   {"label": "Быстро растущие темы за 24 часа", "description": "Подходит для раннего обнаружения новых трендов."},
     "top_week":     {"label": "Лучшее за неделю",                 "description": "Показывает самые заметные обсуждения недели."},
     "top_month":    {"label": "Лучшее за месяц",                  "description": "Подходит для стратегического анализа устойчивых тем."},
+    # YouTube-specific collection modes
+    "youtube_recent":   {"label": "Новые видео",                "description": "Последние опубликованные видео по теме."},
+    "youtube_popular":  {"label": "Популярные видео",           "description": "Видео с наибольшим числом просмотров."},
+    "youtube_relevant": {"label": "Наиболее релевантные",       "description": "Видео по релевантности к запросу."},
+}
+
+SOURCE_STATUS_LABELS = {
+    "active":       {"label": "Активен",        "color": "green"},
+    "prepared":     {"label": "Подготовлен",    "color": "blue"},
+    "coming_soon":  {"label": "Скоро",          "color": "gray"},
+    "disabled":     {"label": "Отключён",       "color": "red"},
 }
 
 SCHEDULE_LABELS = {
@@ -48,4 +59,5 @@ async def get_labels():
         "statuses":          STATUS_LABELS,
         "sources":           SOURCE_LABELS,
         "storage_providers": STORAGE_PROVIDER_LABELS,
+        "source_statuses":   SOURCE_STATUS_LABELS,
     }

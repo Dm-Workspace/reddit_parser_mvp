@@ -50,6 +50,7 @@ class Monitor:
     owner_telegram_id: int      = 0
     description: str            = ""
     source: str                 = "reddit"
+    source_config: str          = ""   # JSON: {"preset_pack_id": "...", "subreddits": [...], ...}
 
     # Presets (DB IDs or legacy config keys)
     subreddit_preset_id: Optional[str]  = None
@@ -163,4 +164,4 @@ MAX_ACTIVE_MONITORS_PER_PROJECT = int(__import__("os").environ.get("MAX_ACTIVE_M
 MAX_MANUAL_RUNS_PER_DAY         = int(__import__("os").environ.get("MAX_MANUAL_RUNS_PER_DAY", "5"))
 MAX_TOTAL_RUNS_PER_MONTH        = int(__import__("os").environ.get("MAX_TOTAL_RUNS_PER_MONTH", "30"))
 
-APP_VERSION = "6.1"
+APP_VERSION = "6.2"

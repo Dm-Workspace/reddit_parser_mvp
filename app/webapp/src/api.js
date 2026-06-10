@@ -61,5 +61,9 @@ window.API = (function () {
 
     // Sources
     listSources: () => request("GET", "/sources"),
+
+    // Preset packs
+    listPresetPacks: (source) => request("GET", "/preset-packs" + (source ? "?source=" + source : "")),
+    getPresetPack: (id) => request("GET", `/preset-packs/${id}`),
   };
 })();

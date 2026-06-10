@@ -1,29 +1,30 @@
 from fastapi import APIRouter
+from app.services import source_registry
 
 router = APIRouter()
-
-SOURCES = {
-    "reddit": {
-        "id": "reddit",
-        "label": "Reddit",
-        "status": "active",
-        "supports_presets": True,
-        "supports_comments": True,
-        "supports_schedule": True,
-        "description": "Reddit posts and comments via Playwright headless browser",
-    },
-    "youtube": {
-        "id": "youtube",
-        "label": "YouTube",
-        "status": "coming_soon",
-        "supports_presets": False,
-        "supports_comments": True,
-        "supports_schedule": False,
-        "description": "YouTube trending videos and comments (coming soon)",
-    },
-}
 
 
 @router.get("/sources")
 async def list_sources():
-    return list(SOURCES.values())
+    """List all sources with status. Includes active + coming_soon + prepared."""
+    sources = source_registry.list_all_sources()
+    return [_source_dict(s) for s in sources]
+
+
+def _source_dict(s: dict) -> dict:
+    d = {
+        "id":                   s["id"],
+        "label":                s["label"],
+        "description":          s.get("description", ""),
+        "status":               s["status"],
+        "icon":                 s.get("icon", ""),
+        "supports_presets":     s.get("supports_presets", False),
+        "supports_comments":    s.get("supports_comments", False),
+        "supports_schedule":    s.get("supports_schedule", False),
+    }
+    # Include integration info for prepared sources
+    if s.get("integration_branch"):
+        d["integration_branch"] = s["integration_branch"]
+        d["integration_tag"] = s.get("integration_tag", "")
+        d["activation_note"] = s.get("activation_note", "")
+    return d

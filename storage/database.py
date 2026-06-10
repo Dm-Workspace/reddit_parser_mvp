@@ -258,6 +258,8 @@ _MIGRATIONS_PG = [
     "ALTER TABLE exports ADD COLUMN IF NOT EXISTS drive_file_id TEXT",
     "ALTER TABLE exports ADD COLUMN IF NOT EXISTS drive_web_view_link TEXT",
     "ALTER TABLE exports ADD COLUMN IF NOT EXISTS drive_download_link TEXT",
+    "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS source_config TEXT DEFAULT ''",
+    "ALTER TABLE monitors ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'reddit'",
 ]
 
 # SQLite migrations: (table, column, typedef)
@@ -301,6 +303,8 @@ _MIGRATIONS_SQLITE = [
     ("exports",  "drive_file_id",               "TEXT"),
     ("exports",  "drive_web_view_link",         "TEXT"),
     ("exports",  "drive_download_link",         "TEXT"),
+    ("monitors", "source_config",               "TEXT DEFAULT ''"),
+    ("monitors", "source",                      "TEXT DEFAULT 'reddit'"),
 ]
 
 
